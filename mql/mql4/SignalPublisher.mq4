@@ -144,6 +144,45 @@ void EmitEvent(string eventName, int ticket, string symbol, int type,
       Print("edgeflow: failed to finalize ", name, " err=", GetLastError());
   }
 
+// CLOSE needs the actual close price and realized profit, not the OPEN
+// price EmitEvent()'s "entry" parameter carries -- without this, nothing
+// downstream can ever learn which trades (and entry patterns) were
+// actually good ones. Requires OrderSelect() to already be pointing at
+// the closed order's history record (see the caller in OnTimer()).
+void EmitCloseEvent(int ticket, string symbol, int type, double volume,
+                     double openPrice, double sl, double tp)
+  {
+   string dir = "edgeflow\\out\\";
+   string name = IntegerToString(ticket) + "_CLOSE_" + IntegerToString(MathRand()) + ".json";
+   string tmpName = "." + name + ".tmp";
+
+   int handle = FileOpen(dir + tmpName, FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+     {
+      Print("edgeflow: failed to open ", dir + tmpName, " err=", GetLastError());
+      return;
+     }
+
+   FileWrite(handle, "{");
+   FileWrite(handle, "  \"ticket\": ", ticket, ",");
+   FileWrite(handle, "  \"event\": \"CLOSE\",");
+   FileWrite(handle, "  \"symbol\": \"", symbol, "\",");
+   FileWrite(handle, "  \"side\": \"", SideOf(type), "\",");
+   FileWrite(handle, "  \"volume\": ", DoubleToString(volume, 2), ",");
+   FileWrite(handle, "  \"entry_price\": ", DoubleToString(openPrice, Digits), ",");
+   FileWrite(handle, "  \"close_price\": ", DoubleToString(OrderClosePrice(), Digits), ",");
+   FileWrite(handle, "  \"profit\": ", DoubleToString(OrderProfit() + OrderSwap() + OrderCommission(), 2), ",");
+   FileWrite(handle, "  \"stop_loss\": ", DoubleToString(sl, Digits), ",");
+   FileWrite(handle, "  \"take_profit\": ", DoubleToString(tp, Digits), ",");
+   FileWrite(handle, "  \"equity\": ", DoubleToString(AccountEquity(), 2), ",");
+   FileWrite(handle, "  \"timestamp\": \"", NowIso(), "\"");
+   FileWrite(handle, "}");
+   FileClose(handle);
+
+   if(!FileMove(dir + tmpName, 0, dir + name, FILE_REWRITE))
+      Print("edgeflow: failed to finalize ", name, " err=", GetLastError());
+  }
+
 void OnTimer()
   {
    bool seen[];
@@ -187,8 +226,8 @@ void OnTimer()
       if(i < ArraySize(seen) && seen[i])
          continue;
       if(OrderSelect(g_tickets[i], SELECT_BY_TICKET, MODE_HISTORY))
-         EmitEvent("CLOSE", g_tickets[i], OrderSymbol(), OrderType(),
-                   g_volumes[i], OrderOpenPrice(), g_stopLoss[i], g_takeProfit[i], false);
+         EmitCloseEvent(g_tickets[i], OrderSymbol(), OrderType(),
+                         g_volumes[i], OrderOpenPrice(), g_stopLoss[i], g_takeProfit[i]);
       RemoveTracked(i);
      }
   }

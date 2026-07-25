@@ -46,6 +46,13 @@ class TradeSignal:
     # Recent H1 candles leading up to the entry, only populated on OPEN
     # events -- the raw material for SMC entry-context analysis.
     context_candles: list[Candle] = field(default_factory=list)
+    # Only populated on CLOSE events -- the outcome of the trade, without
+    # which nothing downstream can ever learn which patterns were good
+    # ones. close_profit is the SOURCE account's profit/loss in its own
+    # account currency (informational only: the target's actual P&L
+    # depends on its own volume and is not derived from this).
+    close_price: Optional[float] = None
+    close_profit: Optional[float] = None
 
 
 @dataclass(frozen=True)

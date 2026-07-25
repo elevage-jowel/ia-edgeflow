@@ -32,6 +32,8 @@ Chaque position copiée avec succès est enregistrée dans la table `positions` 
 
 À l'ouverture, l'EA source joint aussi les 30 dernières bougies H1 du symbole, que `engine/smc_analysis.py` analyse pour détecter les éléments Smart Money Concepts / ICT que tu utilises pour entrer : **imbalance (Fair Value Gap)**, **prise de liquidité** (mèche qui balaie un plus haut/bas puis rejette), **cassure de structure (BOS)**, et **order block**. Le résultat est stocké avec chaque position (`has_fvg`, `has_liquidity_grab`, `has_bos`, `has_order_block`, et le détail en JSON) et visible dans le dashboard. Le **breaker block** n'est pas encore implémenté — il demande de suivre l'invalidation d'un order block dans le temps, prochaine étape une fois cette base validée sur de vrais trades.
 
+À la fermeture, le **prix de clôture et le profit réel** (source) sont aussi enregistrés (`close_price`, `source_profit`) — sans ça, impossible de savoir plus tard quels patterns détectés à l'entrée menaient à de bons trades.
+
 ## Structure du repo
 
 - `engine/` — moteur Python (risque, score de qualité, analyse SMC du contexte d'entrée, bridge fichiers, base SQLite, kill-switch, boucle principale).

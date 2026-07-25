@@ -50,6 +50,7 @@ def _process_target(signal: TradeSignal, target: TargetAccountConfig,
         db.close_position(
             conn, source_account_id=signal.source_account_id,
             source_ticket=signal.source_ticket, target_account_id=target.id,
+            close_price=signal.close_price, source_profit=signal.close_profit,
         )
         return
 

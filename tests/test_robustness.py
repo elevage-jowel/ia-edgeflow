@@ -198,6 +198,52 @@ def test_modify_to_breakeven_sl_is_still_forwarded(tmp_path: Path):
     assert sent["stop_loss"] == pytest.approx(1.1000)
 
 
+def test_close_event_records_outcome(tmp_path: Path):
+    """Regression test: closing a position must capture close_price and
+    profit, not just flip status to CLOSED -- otherwise nothing can ever
+    learn which entry patterns led to good trades."""
+    source_dir = tmp_path / "source"
+    (source_dir / "out").mkdir(parents=True)
+    target_dir = tmp_path / "target"
+    (target_dir / "in").mkdir(parents=True)
+    (target_dir / "heartbeat.json").write_text(
+        json.dumps({"equity": 10000, "balance": 10000, "timestamp": time.time()})
+    )
+
+    spec = SymbolSpec("EURUSD", 100000, 0.00001, 1.0, 0.01, 0.01, 100)
+    cfg = EngineConfig(
+        poll_interval_seconds=0.1, max_daily_drawdown_pct=5.0,
+        kill_switch_file=tmp_path / "KILL", db_path=tmp_path / "edgeflow.db",
+        source=SourceAccountConfig(id="src", files_dir=source_dir),
+        targets=[TargetAccountConfig(id="tgt", files_dir=target_dir, risk_pct=1.0,
+                                      symbol_specs={"EURUSD": spec})],
+    )
+    inbox = SignalInbox(cfg.source.files_dir, cfg.source.id)
+    outboxes = {"tgt": CommandOutbox(target_dir)}
+    kill_switch = KillSwitch(cfg.kill_switch_file, cfg.max_daily_drawdown_pct)
+
+    (source_dir / "out" / "1_open.json").write_text(json.dumps({
+        "ticket": 99, "event": "OPEN", "symbol": "EURUSD", "side": "BUY",
+        "volume": 1.0, "entry_price": 1.1000, "stop_loss": 1.0950, "take_profit": 1.1150,
+        "equity": 10000, "timestamp": "t",
+    }))
+    (source_dir / "out" / "2_close.json").write_text(json.dumps({
+        "ticket": 99, "event": "CLOSE", "symbol": "EURUSD", "side": "BUY",
+        "volume": 1.0, "entry_price": 1.1000, "close_price": 1.1150,
+        "stop_loss": 1.0950, "take_profit": 1.1150, "profit": 150.0,
+        "equity": 10150, "timestamp": "t",
+    }))
+
+    with db.connect(cfg.db_path) as conn:
+        run_once(cfg, inbox, outboxes, kill_switch, conn)
+        run_once(cfg, inbox, outboxes, kill_switch, conn)
+        row = dict(db.list_positions(conn)[0])
+
+    assert row["status"] == "CLOSED"
+    assert row["close_price"] == pytest.approx(1.1150)
+    assert row["source_profit"] == pytest.approx(150.0)
+
+
 def _open_position_kwargs(**overrides):
     kwargs = dict(
         source_account_id="src", source_ticket=1, target_account_id="tgt",

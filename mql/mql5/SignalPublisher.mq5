@@ -70,6 +70,44 @@ void EmitEvent(string eventName, ulong ticket, string symbol, ENUM_POSITION_TYPE
       PrintFormat("edgeflow: failed to finalize %s err=%d", name, GetLastError());
   }
 
+// CLOSE needs the actual close price and realized profit -- without this,
+// nothing downstream can ever learn which trades (and entry patterns)
+// were actually good ones.
+void EmitCloseEvent(ulong ticket, string symbol, ENUM_POSITION_TYPE type, double volume,
+                     double openPrice, double closePrice, double profit, double sl, double tp)
+  {
+   string dir = "edgeflow\\out\\";
+   string name = IntegerToString((long)ticket) + "_CLOSE_" + IntegerToString(MathRand()) + ".json";
+   string tmpName = "." + name + ".tmp";
+
+   int handle = FileOpen(dir + tmpName, FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+     {
+      PrintFormat("edgeflow: failed to open %s err=%d", dir + tmpName, GetLastError());
+      return;
+     }
+
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   FileWrite(handle, "{");
+   FileWrite(handle, "  \"ticket\": ", (long)ticket, ",");
+   FileWrite(handle, "  \"event\": \"CLOSE\",");
+   FileWrite(handle, "  \"symbol\": \"", symbol, "\",");
+   FileWrite(handle, "  \"side\": \"", SideOf(type), "\",");
+   FileWrite(handle, "  \"volume\": ", DoubleToString(volume, 2), ",");
+   FileWrite(handle, "  \"entry_price\": ", DoubleToString(openPrice, digits), ",");
+   FileWrite(handle, "  \"close_price\": ", DoubleToString(closePrice, digits), ",");
+   FileWrite(handle, "  \"profit\": ", DoubleToString(profit, 2), ",");
+   FileWrite(handle, "  \"stop_loss\": ", DoubleToString(sl, digits), ",");
+   FileWrite(handle, "  \"take_profit\": ", DoubleToString(tp, digits), ",");
+   FileWrite(handle, "  \"equity\": ", DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2), ",");
+   FileWrite(handle, "  \"timestamp\": ", TimeCurrent());
+   FileWrite(handle, "}");
+   FileClose(handle);
+
+   if(!FileMove(dir + tmpName, 0, dir + name, FILE_REWRITE))
+      PrintFormat("edgeflow: failed to finalize %s err=%d", name, GetLastError());
+  }
+
 void OnTradeTransaction(const MqlTradeTransaction &trans,
                          const MqlTradeRequest &request,
                          const MqlTradeResult &result)
@@ -113,7 +151,27 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
      {
       ENUM_POSITION_TYPE type = (HistoryDealGetInteger(trans.deal, DEAL_TYPE) == DEAL_TYPE_SELL)
                                  ? POSITION_TYPE_BUY : POSITION_TYPE_SELL; // closing deal is opposite side
-      EmitEvent("CLOSE", positionId, symbol, type, dealVolume, dealPrice, 0, 0, false);
+
+      // Recover the position's original open price from its first deal --
+      // PositionSelectByTicket() no longer works once the position is closed.
+      double openPrice = dealPrice;
+      if(HistorySelectByPosition(positionId))
+        {
+         for(int i = 0; i < HistoryDealsTotal(); i++)
+           {
+            ulong dealTicket = HistoryDealGetTicket(i);
+            if((ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY) == DEAL_ENTRY_IN)
+              {
+               openPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+               break;
+              }
+           }
+        }
+
+      double profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT) +
+                       HistoryDealGetDouble(trans.deal, DEAL_SWAP) +
+                       HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+      EmitCloseEvent(positionId, symbol, type, dealVolume, openPrice, dealPrice, profit, 0, 0);
      }
   }
 //+------------------------------------------------------------------+

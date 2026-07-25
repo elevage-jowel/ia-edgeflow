@@ -60,6 +60,14 @@ CREATE TABLE IF NOT EXISTS positions (
     status TEXT NOT NULL DEFAULT 'OPEN',
     opened_at TEXT NOT NULL DEFAULT (datetime('now')),
     closed_at TEXT,
+    -- Outcome, filled in by close_position(): without this, nothing can
+    -- ever learn which of the patterns detected at entry (has_fvg etc.)
+    -- actually led to a good trade.
+    close_price REAL,
+    -- Source account's own profit/loss for this trade, in its account
+    -- currency. Informational, NOT the target's P&L (the target's actual
+    -- result depends on its own volume, which this figure doesn't reflect).
+    source_profit REAL,
     UNIQUE(source_account_id, source_ticket, target_account_id)
 );
 
@@ -175,13 +183,17 @@ def close_position(
     source_account_id: str,
     source_ticket: int,
     target_account_id: str,
+    close_price: float | None = None,
+    source_profit: float | None = None,
 ) -> None:
     conn.execute(
         """
-        UPDATE positions SET status = 'CLOSED', closed_at = datetime('now')
+        UPDATE positions
+        SET status = 'CLOSED', closed_at = datetime('now'),
+            close_price = ?, source_profit = ?
         WHERE source_account_id = ? AND source_ticket = ? AND target_account_id = ?
         """,
-        (source_account_id, source_ticket, target_account_id),
+        (close_price, source_profit, source_account_id, source_ticket, target_account_id),
     )
     conn.commit()
 

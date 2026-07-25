@@ -97,6 +97,8 @@ class SignalInbox:
             source_equity=float(raw["equity"]),
             timestamp=str(raw["timestamp"]),
             context_candles=context_candles,
+            close_price=float(raw["close_price"]) if "close_price" in raw else None,
+            close_profit=float(raw["profit"]) if "profit" in raw else None,
         )
 
     def _quarantine(self, path: Path) -> None:

@@ -20,7 +20,7 @@
   <button onclick="post('/api/resume')">Reprendre</button>
   <h2>Positions enregistrées</h2>
   <table id="positions"><thead>
-    <tr><th>Ouverte</th><th>Symbole</th><th>Sens</th><th>Volume</th><th>R:R</th><th>Écart risque</th><th>Score</th><th>Contexte SMC</th><th>Statut</th></tr>
+    <tr><th>Ouverte</th><th>Symbole</th><th>Sens</th><th>Volume</th><th>R:R</th><th>Écart risque</th><th>Score</th><th>Contexte SMC</th><th>Résultat (source)</th><th>Statut</th></tr>
   </thead><tbody></tbody></table>
 
   <h2>Derniers événements</h2>
@@ -59,9 +59,14 @@ async function refresh() {
       p.has_bos ? 'BOS' : null,
       p.has_order_block ? 'OB' : null,
     ].filter(Boolean).join(', ') || '—';
+    let result = '—';
+    if (p.source_profit !== null && p.source_profit !== undefined) {
+      const cls = p.source_profit >= 0 ? 'color:#1a7f37' : 'color:#b91c1c';
+      result = `<span style="${cls}">${p.source_profit.toFixed(2)}</span>`;
+    }
     tr.innerHTML = `<td>${p.opened_at}</td><td>${p.symbol}</td><td>${p.side}</td>` +
       `<td>${p.target_volume}</td><td>${rr}</td><td>${p.risk_deviation_pct}%</td>` +
-      `<td>${p.quality_score}</td><td>${tags}</td><td>${p.status}</td>`;
+      `<td>${p.quality_score}</td><td>${tags}</td><td>${result}</td><td>${p.status}</td>`;
     ptbody.appendChild(tr);
   }
 }
