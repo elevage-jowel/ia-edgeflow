@@ -36,6 +36,10 @@ Chaque position copiée avec succès est enregistrée dans la table `positions` 
 
 À la fermeture, le **prix de clôture et le profit réel** (source) sont aussi enregistrés (`close_price`, `source_profit`) — sans ça, impossible de savoir plus tard quels patterns détectés à l'entrée menaient à de bons trades.
 
+## Scan du marché en direct (alertes)
+
+`engine/market_scanner.py` surveille en continu une liste de symboles (indépendamment de tout trade copié) pour repérer un **order block juste après une cassure de structure**, et envoie une alerte Telegram/email avec une **entrée/SL/TP suggérés** dès qu'un nouveau setup apparaît. Chaque détection est enregistrée dans `market_patterns` (dédupliquée — pas de répétition sur un setup déjà vu), que tu agisses dessus ou non. **Alertes uniquement : Sentinel n'ouvre jamais de position tout seul.** Voir `mql/README.md` (§ Scan du marché) et `patterns/README.md` pour l'activer et pour la suite (mesurer la fiabilité réelle des setups une fois qu'il y en a assez).
+
 ## Structure du repo
 
 - `engine/` — moteur Python (risque, score de qualité, analyse SMC du contexte d'entrée, bridge fichiers, base SQLite, kill-switch, boucle principale).
@@ -43,7 +47,7 @@ Chaque position copiée avec succès est enregistrée dans la table `positions` 
 - `dashboard/` — statut en direct + bouton d'arrêt d'urgence (FastAPI).
 - `deploy/` — guide de déploiement sur Hostinger VPS + unités systemd.
 - `config/` — exemple de configuration (comptes, risque par compte, specs symboles).
-- `patterns/` — phase 2 (reconnaissance de patterns), pas encore implémentée — voir `patterns/README.md`.
+- `patterns/` — état et suite de la phase 2 (scan du marché en direct) — voir `patterns/README.md`.
 - `tests/` — tests du moteur de risque (`pytest tests/`).
 
 ## Démarrage rapide (local, avant tout déploiement)
@@ -82,5 +86,5 @@ Pour le déploiement complet sur Hostinger (choix du plan VPS, installation Meta
 
 ## Feuille de route
 
-1. **Phase 1 (ce repo aujourd'hui)** — copie risk-parity, MT4/MT5, dashboard, journal SQLite.
-2. **Phase 2** — donner des trades exemples à l'IA, qu'elle en extraie le pattern et scanne le marché réel pour des setups similaires. Voir `patterns/README.md` pour l'approche envisagée.
+1. **Phase 1** — copie risk-parity, MT4/MT5, dashboard, journal SQLite. Fait.
+2. **Phase 2** — scan du marché en direct pour des setups SMC, alertes avec entrée/SL/TP. Fait, en mode alerte uniquement. Reste : mesurer la fiabilité réelle des setups une fois qu'il y en a assez (voir `patterns/README.md`), et n'envisager une automatisation de l'ouverture des trades qu'une fois cette fiabilité prouvée.

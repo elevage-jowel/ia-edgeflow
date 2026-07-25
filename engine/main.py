@@ -17,6 +17,7 @@ from .config import ConfigError, EngineConfig, TargetAccountConfig, load_config
 from .file_bridge import CommandOutbox, SignalInbox
 from .heartbeat import HeartbeatError, read_heartbeat
 from .kill_switch import KillSwitch
+from .market_scanner import scan_and_notify
 from .models import CopyCommand, TradeSignal
 from .notifier import Notifier
 from .risk_engine import RiskEngineError, compute_target_volume, round_to_step
@@ -373,6 +374,11 @@ def main(config_path: str) -> None:
     signal_module.signal(signal_module.SIGTERM, _request_stop)
     signal_module.signal(signal_module.SIGINT, _request_stop)
 
+    if cfg.market_scan.enabled:
+        logger.info("market scan enabled for %s", cfg.market_scan.symbols)
+
+    last_market_scan = 0.0
+
     with db.connect(cfg.db_path) as conn:
         logger.info(
             "Sentinel engine started: source=%s targets=%s",
@@ -383,6 +389,15 @@ def main(config_path: str) -> None:
                 run_once(cfg, inbox, outboxes, kill_switch, conn, notifier)
             except Exception:  # noqa: BLE001 -- a bad poll cycle must not crash the service
                 logger.exception("unexpected error in run_once, continuing")
+
+            now = time.time()
+            if cfg.market_scan.enabled and now - last_market_scan >= cfg.market_scan.poll_interval_seconds:
+                last_market_scan = now
+                try:
+                    scan_and_notify(cfg, conn, notifier)
+                except Exception:  # noqa: BLE001 -- a bad scan must not crash the service
+                    logger.exception("unexpected error in market scan, continuing")
+
             time.sleep(cfg.poll_interval_seconds)
 
     logger.info("edgeflow engine stopped")

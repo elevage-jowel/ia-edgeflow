@@ -22,6 +22,18 @@ class ConfigError(ValueError):
 
 
 @dataclass(frozen=True)
+class MarketScanConfig:
+    enabled: bool = False
+    symbols: list[str] = field(default_factory=list)
+    rr_ratio: float = 2.0
+    poll_interval_seconds: float = 60.0
+    # Where the EA drops <symbol>.json market snapshots -- defaults to the
+    # source account's files_dir (see mql/README.md), but can point
+    # elsewhere if the scanner should watch a different terminal.
+    market_files_dir: Path | None = None
+
+
+@dataclass(frozen=True)
 class TargetAccountConfig:
     id: str
     files_dir: Path
@@ -51,6 +63,7 @@ class EngineConfig:
     # Alert when an opened trade's reward:risk ratio reaches one of these
     # (sorted descending so the highest tier reached is reported).
     rr_alert_thresholds: list[float] = field(default_factory=lambda: [4.0, 3.0, 2.0])
+    market_scan: MarketScanConfig = field(default_factory=MarketScanConfig)
 
 
 def _require(d: dict, key: str, where: str):
@@ -133,6 +146,16 @@ def load_config(path: str | Path) -> EngineConfig:
         reverse=True,
     )
 
+    scan_raw = raw.get("market_scan", {}) or {}
+    scan_files_dir = scan_raw.get("market_files_dir")
+    market_scan = MarketScanConfig(
+        enabled=bool(scan_raw.get("enabled", False)),
+        symbols=list(scan_raw.get("symbols", [])),
+        rr_ratio=float(scan_raw.get("rr_ratio", 2.0)),
+        poll_interval_seconds=float(scan_raw.get("poll_interval_seconds", 60.0)),
+        market_files_dir=Path(scan_files_dir).expanduser() if scan_files_dir else None,
+    )
+
     return EngineConfig(
         poll_interval_seconds=float(raw.get("poll_interval_seconds", 0.5)),
         max_daily_drawdown_pct=float(risk_raw.get("max_daily_drawdown_pct", 5.0)),
@@ -142,4 +165,5 @@ def load_config(path: str | Path) -> EngineConfig:
         targets=targets,
         notifications=notifications,
         rr_alert_thresholds=rr_alert_thresholds,
+        market_scan=market_scan,
     )

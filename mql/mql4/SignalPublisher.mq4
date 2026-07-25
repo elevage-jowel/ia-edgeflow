@@ -8,6 +8,9 @@
 
 input int PollMillis = 500;
 input int ContextCandleCount = 30; // H1 bars sent with each OPEN, for SMC entry-context analysis
+input string ScanSymbols = "";          // comma-separated watchlist for the live market scanner, e.g. "EURUSD,GBPUSD,XAUUSD" -- empty disables it
+input int ScanIntervalSeconds = 300;    // how often to refresh each watchlist symbol's snapshot
+input int ScanCandleCount = 60;         // H1 bars per snapshot -- wider than ContextCandleCount so older order blocks stay visible
 
 // Parallel arrays tracking the last known state of every open ticket,
 // since MT4 has no OnTradeTransaction event -- we diff snapshots instead.
@@ -15,6 +18,9 @@ int    g_tickets[];
 double g_volumes[];
 double g_stopLoss[];
 double g_takeProfit[];
+
+string g_scanSymbols[];
+datetime g_lastScanTime = 0;
 
 int OnInit()
   {
@@ -37,6 +43,9 @@ int OnInit()
          continue;
       AddTracked(OrderTicket(), OrderLots(), OrderStopLoss(), OrderTakeProfit());
      }
+
+   if(StringLen(ScanSymbols) > 0)
+      StringSplit(ScanSymbols, ',', g_scanSymbols);
 
    return(INIT_SUCCEEDED);
   }
@@ -106,6 +115,55 @@ void WriteContextCandles(int handle, string symbol)
                 ", \"close\": ", DoubleToString(iClose(symbol, PERIOD_H1, k), Digits), "}", comma);
      }
    FileWrite(handle, "  ],");
+  }
+
+// Snapshots the last ScanCandleCount H1 bars for one watchlist symbol, for
+// the live market scanner (engine/market_scanner.py) -- independent of any
+// open trade. Overwrites the same file each time; only the latest state
+// matters, the Python side records what it finds elsewhere (market_patterns).
+void WriteMarketSnapshot(string symbol)
+  {
+   string dir = "edgeflow\\market\\";
+   string name = symbol + ".json";
+   string tmpName = "." + name + ".tmp";
+
+   int handle = FileOpen(dir + tmpName, FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+     {
+      Print("edgeflow: failed to open ", dir + tmpName, " err=", GetLastError());
+      return;
+     }
+
+   FileWrite(handle, "{");
+   FileWrite(handle, "  \"symbol\": \"", symbol, "\",");
+   FileWrite(handle, "  \"candles\": [");
+   for(int k = ScanCandleCount; k >= 1; k--)
+     {
+      string comma = (k == 1) ? "" : ",";
+      FileWrite(handle, "    {\"time\": \"", TimeToString(iTime(symbol, PERIOD_H1, k), TIME_DATE | TIME_MINUTES),
+                "\", \"open\": ", DoubleToString(iOpen(symbol, PERIOD_H1, k), MarketInfo(symbol, MODE_DIGITS)),
+                ", \"high\": ", DoubleToString(iHigh(symbol, PERIOD_H1, k), MarketInfo(symbol, MODE_DIGITS)),
+                ", \"low\": ", DoubleToString(iLow(symbol, PERIOD_H1, k), MarketInfo(symbol, MODE_DIGITS)),
+                ", \"close\": ", DoubleToString(iClose(symbol, PERIOD_H1, k), MarketInfo(symbol, MODE_DIGITS)), "}", comma);
+     }
+   FileWrite(handle, "  ]");
+   FileWrite(handle, "}");
+   FileClose(handle);
+
+   if(!FileMove(dir + tmpName, 0, dir + name, FILE_REWRITE))
+      Print("edgeflow: failed to finalize market snapshot ", name, " err=", GetLastError());
+  }
+
+void ScanMarketIfDue()
+  {
+   if(ArraySize(g_scanSymbols) == 0)
+      return;
+   if(TimeCurrent() - g_lastScanTime < ScanIntervalSeconds)
+      return;
+   g_lastScanTime = TimeCurrent();
+
+   for(int i = 0; i < ArraySize(g_scanSymbols); i++)
+      WriteMarketSnapshot(g_scanSymbols[i]);
   }
 
 // Writes <ticket>_<event>_<rand>.json atomically (write to .tmp, then rename).
@@ -185,6 +243,8 @@ void EmitCloseEvent(int ticket, string symbol, int type, double volume,
 
 void OnTimer()
   {
+   ScanMarketIfDue();
+
    bool seen[];
    ArrayResize(seen, ArraySize(g_tickets));
    ArrayInitialize(seen, false);

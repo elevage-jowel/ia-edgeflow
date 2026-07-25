@@ -79,6 +79,29 @@ CREATE TABLE IF NOT EXISTS positions (
 CREATE INDEX IF NOT EXISTS idx_copy_log_ticket ON copy_log(source_account_id, source_ticket);
 CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol);
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
+
+-- Every SMC setup the live market scanner (engine/market_scanner.py)
+-- detects, whether or not the user acts on it -- independent of copied
+-- trades entirely. This is the dataset "how good is this pattern really"
+-- gets answered from, once enough of them have played out. No outcome
+-- columns yet (hit_tp/hit_sl): that needs the scanner to keep re-checking
+-- a setup against later candles, a natural next step once this base is
+-- validated.
+CREATE TABLE IF NOT EXISTS market_patterns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+    symbol TEXT NOT NULL,
+    pattern_type TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    order_block_time TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    stop_loss REAL NOT NULL,
+    take_profit REAL NOT NULL,
+    rr_ratio REAL NOT NULL,
+    UNIQUE(symbol, pattern_type, order_block_time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_patterns_symbol ON market_patterns(symbol);
 """
 
 
@@ -230,4 +253,41 @@ def list_positions(conn: sqlite3.Connection, limit: int = 50) -> list[sqlite3.Ro
     conn.row_factory = sqlite3.Row
     return conn.execute(
         "SELECT * FROM positions ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
+
+
+def insert_market_pattern(
+    conn: sqlite3.Connection,
+    *,
+    symbol: str,
+    pattern_type: str,
+    direction: str,
+    order_block_time: str,
+    entry_price: float,
+    stop_loss: float,
+    take_profit: float,
+    rr_ratio: float,
+) -> bool:
+    """Returns True if this is a NEWLY seen pattern (the caller should
+    alert), False if it was already recorded -- the UNIQUE constraint on
+    (symbol, pattern_type, order_block_time) means the same formation
+    scanned again on a later poll is silently a no-op, not a re-alert."""
+    cursor = conn.execute(
+        """
+        INSERT OR IGNORE INTO market_patterns (
+            symbol, pattern_type, direction, order_block_time,
+            entry_price, stop_loss, take_profit, rr_ratio
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (symbol, pattern_type, direction, order_block_time,
+         entry_price, stop_loss, take_profit, rr_ratio),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def list_market_patterns(conn: sqlite3.Connection, limit: int = 50) -> list[sqlite3.Row]:
+    conn.row_factory = sqlite3.Row
+    return conn.execute(
+        "SELECT * FROM market_patterns ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()

@@ -22,6 +22,18 @@ notifications:
   email_from: ""
   email_to: ""
 
+# Optional. Continuously watches a symbol list for SMC setups (Order Block
+# + Break of Structure) on the live market, independent of any trade you
+# actually copy -- alerts (via `notifications:` above) with a suggested
+# entry/SL/TP and records every detection for later analysis. Alerts only:
+# nothing here ever opens a trade on its own. Needs SignalPublisher's
+# ScanSymbols input set to the same list (see mql/README.md).
+market_scan:
+  enabled: false
+  symbols: [EURUSD, GBPUSD, XAUUSD]
+  rr_ratio: 2.0
+  poll_interval_seconds: 60
+
 source_account:
   id: broker_a_source
   # Absolute path to <Terminal>/MQL4/Files/edgeflow on the VPS filesystem

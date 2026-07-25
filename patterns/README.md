@@ -1,42 +1,18 @@
-# Phase 2 — reconnaissance de patterns (pas encore implémenté)
+# Phase 2 — reconnaissance de patterns sur le marché en direct
 
-Objectif : donner à l'IA des trades exemples (les tiens, copiés et journalisés
-par `engine/db.py` en phase 1), qu'elle en extraie les caractéristiques
-communes, puis qu'elle scanne le marché en direct pour repérer les mêmes
-configurations.
+## Ce qui existe déjà
 
-**Mise à jour** : la détection Smart Money Concepts (imbalance, prise de
-liquidité, cassure de structure, order block) tourne déjà à chaque entrée —
-voir `engine/smc_analysis.py`. C'est la brique de base : les mêmes
-détecteurs, appliqués non plus seulement au moment de l'entrée mais en
-continu sur le flux de marché en direct, sont ce qui permettra de repérer
-"ce même pattern" en train de se former ailleurs. Ce dossier reste vide tant
-qu'il n'y a pas assez d'historique réel (`positions.context_json`) pour
-juger ce qui, dans ces patterns détectés, correspond réellement à tes bons
-trades.
+`engine/market_scanner.py` scanne en direct une liste de symboles (indépendamment de tout trade copié) pour repérer le setup Smart Money Concepts standard — un **order block juste après une cassure de structure** — et alerte (Telegram/email) avec une entrée/SL/TP suggérés. Chaque détection est aussi enregistrée dans `market_patterns`, qu'on agisse dessus ou pas. **Alertes uniquement : rien n'ouvre de position automatiquement.**
 
-Ce dossier est un espace réservé volontairement vide — il ne sera construit
-qu'une fois le copieur (phase 1) tourne de façon fiable sur au moins un
-compte réel, pour deux raisons :
+Voir `mql/README.md` pour l'activer (`ScanSymbols` côté EA + section `market_scan:` de `config.yaml`).
 
-1. **Les données d'entraînement viennent de la phase 1.** La table
-   `copy_log` (et son enrichissement à venir avec le résultat de chaque
-   trade — pips gagnés/perdus, durée, contexte) est la matière première.
-   Sans historique réel, un modèle de pattern-matching n'a rien à apprendre
-   d'honnête.
-2. **Le choix de méthode dépend de ce que "pattern" veut dire pour toi** :
-   structure de prix (figures chartistes), contexte indicateurs (RSI,
-   moyennes mobiles, volatilité), séquence de bougies, ou une combinaison.
-   Ça se décide avec des exemples concrets de trades que tu juges
-   "similaires", pas dans l'abstrait.
+## Ce qui reste à faire
 
-## Pistes envisagées (à valider ensemble le moment venu)
+1. **Mesurer la fiabilité réelle des setups détectés.** `market_patterns` n'enregistre pour l'instant que la détection (entrée/SL/TP suggérés), pas le résultat — on ne sait pas encore si le prix touche le TP ou le SL après coup. Prochaine étape : faire re-vérifier chaque setup par le scanner sur les bougies suivantes, et enregistrer l'issue (`hit_tp`/`hit_sl`).
+2. **Élargir au-delà d'order block + BOS.** Les imbalances (FVG) et prises de liquidité seules sont détectées par `engine/smc_analysis.py` mais n'ont pas encore de règle d'entrée/SL/TP définie — ça se décide avec des exemples concrets de trades que tu juges "bons", pas dans l'abstrait.
+3. **Corréler avec tes propres trades copiés.** La table `positions` (tes trades réels, avec résultat) et `market_patterns` (les détections en direct) partagent la même logique de détection — une fois qu'il y aura assez d'historique des deux côtés, on pourra croiser "quels tags SMC apparaissent le plus dans tes trades gagnants" avec "quels setups le scanner détecte le plus souvent".
+4. **Entraînement ML**, si nécessaire une fois qu'il y a assez de données : à faire hors du VPS Hostinger (pas de GPU côté KVM), seule l'inférence tournerait ici.
 
-- Extraction de features par trade (contexte prix/indicateurs à l'entrée)
-  + recherche de similarité (distance vectorielle ou embeddings) contre le
-  flux de marché en direct.
-- Alerting plutôt qu'exécution automatique dans un premier temps : l'IA
-  signale un setup ressemblant, tu valides, elle ne trade pas seule tant que
-  la fiabilité n'est pas mesurée sur plusieurs mois.
-- Entraînement (si un modèle ML devient nécessaire) hors du VPS Hostinger
-  (pas de GPU disponible côté KVM) ; seule l'inférence tournerait ici.
+## Pourquoi ce n'est pas allé plus loin pour l'instant
+
+Sans assez de setups **résolus** (dont on connaît l'issue), impossible de dire honnêtement si un pattern détecté est fiable — le construire maintenant produirait des chiffres qui ont l'air précis mais ne veulent rien dire. La priorité est de laisser tourner le scan et la copie assez longtemps pour accumuler des exemples réels.

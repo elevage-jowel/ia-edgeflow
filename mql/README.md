@@ -4,7 +4,7 @@ Deux Expert Advisors par plateforme (MQL4 pour MT4, MQL5 pour MT5), qui font le 
 
 ## Rôles
 
-- **SignalPublisher** : à installer sur le compte **source** (celui qu'on copie). Détecte OPEN/MODIFY/CLOSE et écrit un fichier JSON par événement dans `MQL4|MQL5/Files/edgeflow/out/`. Sur un événement OPEN, il joint aussi les `ContextCandleCount` dernières bougies H1 (30 par défaut) du symbole — c'est la matière première utilisée côté Python pour détecter imbalance/liquidité/cassure de structure/order block (`engine/smc_analysis.py`).
+- **SignalPublisher** : à installer sur le compte **source** (celui qu'on copie). Détecte OPEN/MODIFY/CLOSE et écrit un fichier JSON par événement dans `MQL4|MQL5/Files/edgeflow/out/`. Sur un événement OPEN, il joint aussi les `ContextCandleCount` dernières bougies H1 (30 par défaut) du symbole — c'est la matière première utilisée côté Python pour détecter imbalance/liquidité/cassure de structure/order block (`engine/smc_analysis.py`). Il gère aussi, optionnellement, le **scan du marché en direct** (voir plus bas).
 - **CommandExecutor** : à installer sur **chaque compte cible**. Lit les ordres écrits par le moteur Python dans `edgeflow/in/`, les exécute, et publie l'équité du compte toutes les 500 ms dans `edgeflow/heartbeat.json` (indispensable pour le calcul de risque proportionnel).
 
 ## Installation
@@ -32,6 +32,17 @@ C'est **ce chemin absolu** qu'il faut renseigner dans `config/config.yaml` (`sou
 ## Clôtures partielles
 
 Une clôture partielle sur la source (fermer une partie du lot) est détectée et répercutée proportionnellement sur la cible : si la source ferme 30% de sa position, la cible ferme aussi environ 30% de la sienne (arrondi vers le bas, jamais vers le haut, pour ne jamais laisser la cible plus exposée que proportionnellement correct). Le calcul se base toujours sur les volumes d'origine à l'ouverture, pas sur un total cumulé — donc pas de dérive d'arrondi même après plusieurs clôtures partielles successives sur le même trade.
+
+## Scan du marché en direct (alertes)
+
+`SignalPublisher` peut aussi surveiller une liste de symboles indépendamment de tout trade copié, pour repérer des setups Smart Money Concepts (order block juste après une cassure de structure) et t'alerter par Telegram/email avec une entrée/SL/TP suggérés — **jamais d'ouverture automatique**, uniquement des alertes.
+
+Pour l'activer :
+1. Renseigner `ScanSymbols` dans les paramètres de l'EA (ex: `"EURUSD,GBPUSD,XAUUSD"`), et `ScanIntervalSeconds` (300 par défaut).
+2. Activer et configurer la section `market_scan:` de `config/config.yaml` (voir `config/config.example.yaml`) avec **la même liste de symboles**.
+3. Le moteur Python lit `edgeflow/market/<symbole>.json` (écrit par l'EA), détecte les setups (`engine/market_scanner.py`), les enregistre dans la table `market_patterns`, et alerte sur chaque **nouveau** setup (pas de répétition sur un setup déjà vu).
+
+Chaque symbole scanné doit être visible dans le Market Watch du terminal (sinon `iTime`/`CopyRates` renvoient des données vides).
 
 ## Limites connues de ce MVP
 
