@@ -20,6 +20,7 @@ exposure is blocked.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 MANUAL_REASON = "MANUAL"
 AUTO_DRAWDOWN_REASON = "AUTO_DRAWDOWN"
@@ -44,10 +45,15 @@ class DailyEquityTracker:
 
 
 class KillSwitch:
-    def __init__(self, kill_file: Path, max_daily_drawdown_pct: float):
+    def __init__(self, kill_file: Path, max_daily_drawdown_pct: float,
+                 on_auto_trigger: Callable[[float], None] | None = None):
         self.kill_file = kill_file
         self.max_daily_drawdown_pct = max_daily_drawdown_pct
         self._tracker = DailyEquityTracker()
+        # Called with the drawdown_pct exactly once, the moment the
+        # automatic trigger fires -- lets main.py fire a proactive alert
+        # instead of the trader only finding out from the dashboard.
+        self.on_auto_trigger = on_auto_trigger
 
     def reason(self) -> str | None:
         if not self.kill_file.exists():
@@ -75,6 +81,8 @@ class KillSwitch:
 
         if drawdown_pct >= self.max_daily_drawdown_pct and current_reason is None:
             self._write_reason(AUTO_DRAWDOWN_REASON)
+            if self.on_auto_trigger is not None:
+                self.on_auto_trigger(drawdown_pct)
 
     def is_active(self, equity: float | None = None, today: str | None = None) -> bool:
         if equity is not None and today is not None:

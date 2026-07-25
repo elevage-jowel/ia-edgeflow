@@ -59,6 +59,19 @@ sudo systemctl enable --now edgeflow-engine edgeflow-dashboard
 sudo journalctl -u edgeflow-engine -f   # suivre les logs
 ```
 
+## 6bis. Sauvegarde automatique de la base + alertes
+
+```bash
+sudo apt install -y sqlite3   # requis par deploy/backup-db.sh
+sudo cp deploy/systemd/edgeflow-backup.service /etc/systemd/system/
+sudo cp deploy/systemd/edgeflow-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now edgeflow-backup.timer
+systemctl list-timers edgeflow-backup   # vérifier la prochaine exécution
+```
+
+Pour recevoir une alerte (Telegram et/ou email) quand le kill-switch se déclenche automatiquement, qu'une erreur inattendue survient, ou qu'un trade s'ouvre avec un bon ratio risque/récompense : renseigner la section `notifications:` de `config/config.yaml` (voir `config/config.example.yaml`). Pour Telegram, créer un bot via [@BotFather](https://t.me/BotFather) et récupérer son token + ton chat id (via [@userinfobot](https://t.me/userinfobot)).
+
 ## 7. Vérifier avant de connecter un compte réel
 
 - Ouvrir/fermer une position de test (micro-lot) sur un **compte démo** source et vérifier dans le dashboard (`/api/status`) qu'elle est bien répliquée avec le bon volume sur le compte cible.

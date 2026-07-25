@@ -64,6 +64,12 @@ Pour le déploiement complet sur Hostinger (choix du plan VPS, installation Meta
 - `config/config.yaml` mal formé échoue au démarrage avec un message clair (`ConfigError`) plutôt qu'un `KeyError` cryptique.
 - SQLite tourne en mode WAL pour que le dashboard puisse lire pendant que le moteur écrit, sans erreur "database is locked".
 - Le service s'arrête proprement sur `SIGTERM`/`SIGINT` (utile pour `systemctl stop`), et les logs sont structurés (niveau, horodatage) au lieu de simples `print`.
+- Un redémarrage de terminal MetaTrader (reboot VPS, mise à jour) ne duplique pas les positions déjà ouvertes ni ne les rend orphelines — les EA reconstruisent leur état depuis les positions/ordres existants au démarrage (voir `mql/README.md`).
+
+## Alertes et sauvegarde
+
+- **Notifications Telegram/email** (`engine/notifier.py`, section `notifications:` de `config.yaml`) : déclenchement automatique du kill-switch (drawdown), erreurs inattendues répétées, et ouverture d'un trade avec un bon ratio risque/récompense (seuils configurables via `risk.rr_alert_thresholds`, par défaut 2/3/4).
+- **Sauvegarde quotidienne** de `edgeflow.db` via `deploy/backup-db.sh` + le timer systemd `edgeflow-backup` — snapshot cohérent même en mode WAL, rétention configurable.
 
 ## Avant de connecter un compte réel
 

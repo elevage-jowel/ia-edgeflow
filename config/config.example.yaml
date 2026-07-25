@@ -7,6 +7,20 @@ kill_switch_file: data/KILL_SWITCH
 
 risk:
   max_daily_drawdown_pct: 5.0   # auto kill-switch if source equity drops this much in a day
+  rr_alert_thresholds: [2.0, 3.0, 4.0]   # notify when an opened trade's reward:risk ratio reaches one of these
+
+# Optional. Leave a channel's keys out entirely to disable it. Never commit
+# real tokens/passwords here -- this whole file only exists as config.yaml,
+# which is gitignored.
+notifications:
+  telegram_bot_token: ""   # from @BotFather
+  telegram_chat_id: ""     # your chat id (message @userinfobot to find it)
+  smtp_host: ""
+  smtp_port: 587
+  smtp_username: ""
+  smtp_password: ""
+  email_from: ""
+  email_to: ""
 
 source_account:
   id: broker_a_source

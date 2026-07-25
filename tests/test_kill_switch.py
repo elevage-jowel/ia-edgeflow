@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from engine.kill_switch import AUTO_DRAWDOWN_REASON, MANUAL_REASON, KillSwitch
 
 
@@ -55,3 +57,20 @@ def test_manual_kill_survives_a_new_trading_day(tmp_path: Path):
     still_active = ks.is_active(equity=10_000, today="2026-07-26")
     assert still_active
     assert ks.reason() == MANUAL_REASON
+
+
+def test_on_auto_trigger_callback_fires_once_on_breach(tmp_path: Path):
+    calls = []
+    ks = KillSwitch(tmp_path / "KILL", max_daily_drawdown_pct=5.0,
+                     on_auto_trigger=lambda pct: calls.append(pct))
+
+    ks.is_active(equity=10_000, today="2026-07-25")
+    assert calls == []
+
+    ks.is_active(equity=9_000, today="2026-07-25")  # -10%, triggers
+    assert len(calls) == 1
+    assert calls[0] == pytest.approx(10.0, abs=0.1)
+
+    # Already killed -- must not fire again on subsequent polls.
+    ks.is_active(equity=8_900, today="2026-07-25")
+    assert len(calls) == 1

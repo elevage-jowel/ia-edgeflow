@@ -18,15 +18,30 @@ from .file_bridge import CommandOutbox, SignalInbox
 from .heartbeat import HeartbeatError, read_heartbeat
 from .kill_switch import KillSwitch
 from .models import CopyCommand, TradeSignal
+from .notifier import Notifier
 from .risk_engine import RiskEngineError, compute_target_volume
 from .scoring import score_position
 from .smc_analysis import analyze_entry_context
 
 logger = logging.getLogger(__name__)
 
+# Minimum gap between two "unexpected error" alerts -- a bug that fires on
+# every poll cycle (every ~500ms) must not turn into hundreds of messages.
+UNEXPECTED_ERROR_ALERT_INTERVAL_SECONDS = 900
+
+
+def _rr_tier_reached(rr_ratio: float, thresholds: list[float]) -> float | None:
+    """thresholds must be sorted descending; returns the highest one rr_ratio clears."""
+    for threshold in thresholds:
+        if rr_ratio >= threshold:
+            return threshold
+    return None
+
 
 def _process_target(signal: TradeSignal, target: TargetAccountConfig,
-                     outbox: CommandOutbox, killed: bool, conn) -> None:
+                     outbox: CommandOutbox, killed: bool, conn,
+                     notifier: Notifier | None = None,
+                     rr_alert_thresholds: list[float] | None = None) -> None:
     if signal.event.value == "CLOSE":
         # Closing exposure is always allowed, even while killed.
         outbox.send(CopyCommand(
@@ -191,16 +206,29 @@ def _process_target(signal: TradeSignal, target: TargetAccountConfig,
             "duplicate OPEN for ticket %s on %s ignored (position record already exists)",
             signal.source_ticket, target.id,
         )
+        return
+
+    if notifier is not None and score.rr_ratio is not None and rr_alert_thresholds:
+        tier = _rr_tier_reached(score.rr_ratio, rr_alert_thresholds)
+        if tier is not None:
+            notifier.notify(
+                f"Sentinel : trade R:R {score.rr_ratio:.1f}",
+                f"{signal.symbol} {signal.side.value} sur {target.id} — "
+                f"R:R {score.rr_ratio:.2f} (seuil {tier:g} atteint), "
+                f"score qualité {score.quality_score:.0f}/100, volume {volume}.",
+                kind=f"rr_open_{target.id}_{signal.source_ticket}",
+            )
 
 
 def run_once(cfg: EngineConfig, inbox: SignalInbox, outboxes: dict[str, CommandOutbox],
-             kill_switch: KillSwitch, conn) -> None:
+             kill_switch: KillSwitch, conn, notifier: Notifier | None = None) -> None:
     for path, signal in inbox.poll():
         killed = kill_switch.is_active(signal.source_equity, date.today().isoformat())
 
         for target in cfg.targets:
             try:
-                _process_target(signal, target, outboxes[target.id], killed, conn)
+                _process_target(signal, target, outboxes[target.id], killed, conn,
+                                 notifier, cfg.rr_alert_thresholds)
             except Exception as exc:  # noqa: BLE001 -- one bad target must never take down the service
                 logger.exception(
                     "unexpected error copying ticket %s (%s) to %s",
@@ -215,6 +243,14 @@ def run_once(cfg: EngineConfig, inbox: SignalInbox, outboxes: dict[str, CommandO
                     take_profit=signal.take_profit, status="SKIPPED_UNEXPECTED_ERROR",
                     detail=str(exc),
                 )
+                if notifier is not None:
+                    notifier.notify(
+                        "Sentinel : erreur inattendue",
+                        f"Copie de {signal.symbol} (ticket {signal.source_ticket}) vers "
+                        f"{target.id} en échec : {exc}",
+                        kind="unexpected_error",
+                        min_interval_seconds=UNEXPECTED_ERROR_ALERT_INTERVAL_SECONDS,
+                    )
 
         try:
             inbox.mark_processed(path)
@@ -240,7 +276,18 @@ def main(config_path: str) -> None:
 
     inbox = SignalInbox(cfg.source.files_dir, cfg.source.id)
     outboxes = {t.id: CommandOutbox(t.files_dir) for t in cfg.targets}
-    kill_switch = KillSwitch(cfg.kill_switch_file, cfg.max_daily_drawdown_pct)
+    notifier = Notifier(cfg.notifications)
+
+    def _on_auto_trigger(drawdown_pct: float) -> None:
+        notifier.notify(
+            "Sentinel : arrêt automatique (drawdown)",
+            f"Le drawdown journalier du compte source {cfg.source.id} a atteint "
+            f"{drawdown_pct:.1f}% (limite {cfg.max_daily_drawdown_pct:.1f}%). "
+            f"Nouvelles copies bloquées jusqu'à demain ou une reprise manuelle.",
+        )
+
+    kill_switch = KillSwitch(cfg.kill_switch_file, cfg.max_daily_drawdown_pct,
+                              on_auto_trigger=_on_auto_trigger)
 
     stop = {"requested": False}
 
@@ -258,7 +305,7 @@ def main(config_path: str) -> None:
         )
         while not stop["requested"]:
             try:
-                run_once(cfg, inbox, outboxes, kill_switch, conn)
+                run_once(cfg, inbox, outboxes, kill_switch, conn, notifier)
             except Exception:  # noqa: BLE001 -- a bad poll cycle must not crash the service
                 logger.exception("unexpected error in run_once, continuing")
             time.sleep(cfg.poll_interval_seconds)

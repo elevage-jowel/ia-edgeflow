@@ -12,6 +12,7 @@ from pathlib import Path
 import yaml
 
 from .models import SymbolSpec
+from .notifier import NotificationConfig
 
 
 class ConfigError(ValueError):
@@ -42,6 +43,10 @@ class EngineConfig:
     db_path: Path
     source: SourceAccountConfig
     targets: list[TargetAccountConfig] = field(default_factory=list)
+    notifications: NotificationConfig = field(default_factory=NotificationConfig)
+    # Alert when an opened trade's reward:risk ratio reaches one of these
+    # (sorted descending so the highest tier reached is reported).
+    rr_alert_thresholds: list[float] = field(default_factory=lambda: [4.0, 3.0, 2.0])
 
 
 def _require(d: dict, key: str, where: str):
@@ -105,6 +110,22 @@ def load_config(path: str | Path) -> EngineConfig:
         )
 
     risk_raw = raw.get("risk", {})
+    notif_raw = raw.get("notifications", {}) or {}
+    notifications = NotificationConfig(
+        telegram_bot_token=notif_raw.get("telegram_bot_token") or None,
+        telegram_chat_id=notif_raw.get("telegram_chat_id") or None,
+        smtp_host=notif_raw.get("smtp_host") or None,
+        smtp_port=int(notif_raw.get("smtp_port", 587)),
+        smtp_username=notif_raw.get("smtp_username") or None,
+        smtp_password=notif_raw.get("smtp_password") or None,
+        email_from=notif_raw.get("email_from") or None,
+        email_to=notif_raw.get("email_to") or None,
+    )
+
+    rr_alert_thresholds = sorted(
+        (float(x) for x in risk_raw.get("rr_alert_thresholds", [4.0, 3.0, 2.0])),
+        reverse=True,
+    )
 
     return EngineConfig(
         poll_interval_seconds=float(raw.get("poll_interval_seconds", 0.5)),
@@ -113,4 +134,6 @@ def load_config(path: str | Path) -> EngineConfig:
         db_path=Path(raw.get("db_path", "data/edgeflow.db")).expanduser(),
         source=source,
         targets=targets,
+        notifications=notifications,
+        rr_alert_thresholds=rr_alert_thresholds,
     )

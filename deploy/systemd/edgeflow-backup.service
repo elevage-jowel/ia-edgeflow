@@ -1,0 +1,10 @@
+[Unit]
+Description=EdgeFlow database backup
+
+[Service]
+Type=oneshot
+User=edgeflow
+Environment=EDGEFLOW_DB_PATH=/home/edgeflow/ia-edgeflow/data/edgeflow.db
+Environment=EDGEFLOW_BACKUP_DIR=/home/edgeflow/ia-edgeflow/data/backups
+Environment=EDGEFLOW_BACKUP_RETENTION_DAYS=30
+ExecStart=/home/edgeflow/ia-edgeflow/deploy/backup-db.sh
