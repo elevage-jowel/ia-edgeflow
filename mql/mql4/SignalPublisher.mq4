@@ -7,6 +7,7 @@
 #property strict
 
 input int PollMillis = 500;
+input int ContextCandleCount = 30; // H1 bars sent with each OPEN, for SMC entry-context analysis
 
 // Parallel arrays tracking the last known state of every open ticket,
 // since MT4 has no OnTradeTransaction event -- we diff snapshots instead.
@@ -71,9 +72,27 @@ string NowIso()
    return(TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS));
   }
 
+// Writes the last ContextCandleCount closed H1 bars as a JSON array, for
+// SMC entry-context analysis on the Python side (engine/smc_analysis.py).
+// Only called for OPEN events -- context at entry is what matters.
+void WriteContextCandles(int handle, string symbol)
+  {
+   FileWrite(handle, "  \"context_candles\": [");
+   for(int k = ContextCandleCount; k >= 1; k--)
+     {
+      string comma = (k == 1) ? "" : ",";
+      FileWrite(handle, "    {\"time\": \"", TimeToString(iTime(symbol, PERIOD_H1, k), TIME_DATE | TIME_MINUTES),
+                "\", \"open\": ", DoubleToString(iOpen(symbol, PERIOD_H1, k), Digits),
+                ", \"high\": ", DoubleToString(iHigh(symbol, PERIOD_H1, k), Digits),
+                ", \"low\": ", DoubleToString(iLow(symbol, PERIOD_H1, k), Digits),
+                ", \"close\": ", DoubleToString(iClose(symbol, PERIOD_H1, k), Digits), "}", comma);
+     }
+   FileWrite(handle, "  ],");
+  }
+
 // Writes <ticket>_<event>_<rand>.json atomically (write to .tmp, then rename).
 void EmitEvent(string eventName, int ticket, string symbol, int type,
-               double volume, double entry, double sl, double tp)
+               double volume, double entry, double sl, double tp, bool includeContext)
   {
    string dir = "edgeflow\\out\\";
    string name = IntegerToString(ticket) + "_" + eventName + "_" +
@@ -97,6 +116,8 @@ void EmitEvent(string eventName, int ticket, string symbol, int type,
    FileWrite(handle, "  \"stop_loss\": ", DoubleToString(sl, Digits), ",");
    FileWrite(handle, "  \"take_profit\": ", DoubleToString(tp, Digits), ",");
    FileWrite(handle, "  \"equity\": ", DoubleToString(AccountEquity(), 2), ",");
+   if(includeContext)
+      WriteContextCandles(handle, symbol);
    FileWrite(handle, "  \"timestamp\": \"", NowIso(), "\"");
    FileWrite(handle, "}");
    FileClose(handle);
@@ -123,7 +144,7 @@ void OnTimer()
         {
          AddTracked(OrderTicket(), OrderLots(), OrderStopLoss(), OrderTakeProfit());
          EmitEvent("OPEN", OrderTicket(), OrderSymbol(), OrderType(),
-                   OrderLots(), OrderOpenPrice(), OrderStopLoss(), OrderTakeProfit());
+                   OrderLots(), OrderOpenPrice(), OrderStopLoss(), OrderTakeProfit(), true);
         }
       else
         {
@@ -137,7 +158,7 @@ void OnTimer()
             g_stopLoss[idx] = OrderStopLoss();
             g_takeProfit[idx] = OrderTakeProfit();
             EmitEvent("MODIFY", OrderTicket(), OrderSymbol(), OrderType(),
-                      OrderLots(), OrderOpenPrice(), OrderStopLoss(), OrderTakeProfit());
+                      OrderLots(), OrderOpenPrice(), OrderStopLoss(), OrderTakeProfit(), false);
            }
         }
      }
@@ -149,7 +170,7 @@ void OnTimer()
          continue;
       if(OrderSelect(g_tickets[i], SELECT_BY_TICKET, MODE_HISTORY))
          EmitEvent("CLOSE", g_tickets[i], OrderSymbol(), OrderType(),
-                   g_volumes[i], OrderOpenPrice(), g_stopLoss[i], g_takeProfit[i]);
+                   g_volumes[i], OrderOpenPrice(), g_stopLoss[i], g_takeProfit[i], false);
       RemoveTracked(i);
      }
   }

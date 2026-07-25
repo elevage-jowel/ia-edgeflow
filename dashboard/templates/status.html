@@ -20,7 +20,7 @@
   <button onclick="post('/api/resume')">Reprendre</button>
   <h2>Positions enregistrées</h2>
   <table id="positions"><thead>
-    <tr><th>Ouverte</th><th>Symbole</th><th>Sens</th><th>Volume</th><th>R:R</th><th>Écart risque</th><th>Score</th><th>Statut</th></tr>
+    <tr><th>Ouverte</th><th>Symbole</th><th>Sens</th><th>Volume</th><th>R:R</th><th>Écart risque</th><th>Score</th><th>Contexte SMC</th><th>Statut</th></tr>
   </thead><tbody></tbody></table>
 
   <h2>Derniers événements</h2>
@@ -51,9 +51,15 @@ async function refresh() {
   for (const p of pdata.positions) {
     const tr = document.createElement('tr');
     const rr = p.rr_ratio === null ? '—' : p.rr_ratio.toFixed(2);
+    const tags = [
+      p.has_fvg ? 'IMB' : null,
+      p.has_liquidity_grab ? 'Liquidité' : null,
+      p.has_bos ? 'BOS' : null,
+      p.has_order_block ? 'OB' : null,
+    ].filter(Boolean).join(', ') || '—';
     tr.innerHTML = `<td>${p.opened_at}</td><td>${p.symbol}</td><td>${p.side}</td>` +
       `<td>${p.target_volume}</td><td>${rr}</td><td>${p.risk_deviation_pct}%</td>` +
-      `<td>${p.quality_score}</td><td>${p.status}</td>`;
+      `<td>${p.quality_score}</td><td>${tags}</td><td>${p.status}</td>`;
     ptbody.appendChild(tr);
   }
 }

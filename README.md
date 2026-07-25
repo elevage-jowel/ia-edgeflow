@@ -30,9 +30,11 @@ Si le volume calculé tombe sous le minimum du broker, le trade est **ignoré**,
 
 Chaque position copiée avec succès est enregistrée dans la table `positions` (voir `engine/db.py`) avec un **score de qualité 0-100** (`engine/scoring.py`) : ratio risque/récompense de la position (poids 70) + écart entre le risque visé et le risque réellement pris après arrondi du volume (poids 30). Ce score et l'historique des positions sont visibles dans le dashboard, et constituent la base de données que la phase 2 (reconnaissance de patterns) utilisera.
 
+À l'ouverture, l'EA source joint aussi les 30 dernières bougies H1 du symbole, que `engine/smc_analysis.py` analyse pour détecter les éléments Smart Money Concepts / ICT que tu utilises pour entrer : **imbalance (Fair Value Gap)**, **prise de liquidité** (mèche qui balaie un plus haut/bas puis rejette), **cassure de structure (BOS)**, et **order block**. Le résultat est stocké avec chaque position (`has_fvg`, `has_liquidity_grab`, `has_bos`, `has_order_block`, et le détail en JSON) et visible dans le dashboard. Le **breaker block** n'est pas encore implémenté — il demande de suivre l'invalidation d'un order block dans le temps, prochaine étape une fois cette base validée sur de vrais trades.
+
 ## Structure du repo
 
-- `engine/` — moteur Python (risque, score de qualité, bridge fichiers, base SQLite, kill-switch, boucle principale).
+- `engine/` — moteur Python (risque, score de qualité, analyse SMC du contexte d'entrée, bridge fichiers, base SQLite, kill-switch, boucle principale).
 - `mql/` — EA MetaTrader (MQL4 et MQL5) : `SignalPublisher` (source) et `CommandExecutor` (cible).
 - `dashboard/` — statut en direct + bouton d'arrêt d'urgence (FastAPI).
 - `deploy/` — guide de déploiement sur Hostinger VPS + unités systemd.

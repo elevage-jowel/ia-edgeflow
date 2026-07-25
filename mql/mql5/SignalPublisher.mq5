@@ -8,13 +8,34 @@
 //+------------------------------------------------------------------+
 #property strict
 
+input int ContextCandleCount = 30; // H1 bars sent with each OPEN, for SMC entry-context analysis
+
 string SideOf(ENUM_POSITION_TYPE type)
   {
    return(type == POSITION_TYPE_BUY ? "BUY" : "SELL");
   }
 
+// Writes the last ContextCandleCount closed H1 bars as a JSON array, for
+// SMC entry-context analysis on the Python side (engine/smc_analysis.py).
+void WriteContextCandles(int handle, string symbol, int digits)
+  {
+   MqlRates rates[];
+   int copied = CopyRates(symbol, PERIOD_H1, 1, ContextCandleCount, rates);
+   FileWrite(handle, "  \"context_candles\": [");
+   for(int k = 0; k < copied; k++)
+     {
+      string comma = (k == copied - 1) ? "" : ",";
+      FileWrite(handle, "    {\"time\": \"", TimeToString(rates[k].time, TIME_DATE | TIME_MINUTES),
+                "\", \"open\": ", DoubleToString(rates[k].open, digits),
+                ", \"high\": ", DoubleToString(rates[k].high, digits),
+                ", \"low\": ", DoubleToString(rates[k].low, digits),
+                ", \"close\": ", DoubleToString(rates[k].close, digits), "}", comma);
+     }
+   FileWrite(handle, "  ],");
+  }
+
 void EmitEvent(string eventName, ulong ticket, string symbol, ENUM_POSITION_TYPE type,
-               double volume, double entry, double sl, double tp)
+               double volume, double entry, double sl, double tp, bool includeContext)
   {
    string dir = "edgeflow\\out\\";
    string name = IntegerToString((long)ticket) + "_" + eventName + "_" +
@@ -39,6 +60,8 @@ void EmitEvent(string eventName, ulong ticket, string symbol, ENUM_POSITION_TYPE
    FileWrite(handle, "  \"stop_loss\": ", DoubleToString(sl, digits), ",");
    FileWrite(handle, "  \"take_profit\": ", DoubleToString(tp, digits), ",");
    FileWrite(handle, "  \"equity\": ", DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2), ",");
+   if(includeContext)
+      WriteContextCandles(handle, symbol, digits);
    FileWrite(handle, "  \"timestamp\": ", TimeCurrent());
    FileWrite(handle, "}");
    FileClose(handle);
@@ -60,7 +83,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
          ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
          EmitEvent("MODIFY", trans.position, PositionGetString(POSITION_SYMBOL), type,
                    PositionGetDouble(POSITION_VOLUME), PositionGetDouble(POSITION_PRICE_OPEN),
-                   PositionGetDouble(POSITION_SL), PositionGetDouble(POSITION_TP));
+                   PositionGetDouble(POSITION_SL), PositionGetDouble(POSITION_TP), false);
         }
       return;
      }
@@ -83,14 +106,14 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
         {
          ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
          EmitEvent("OPEN", positionId, symbol, type, dealVolume, dealPrice,
-                   PositionGetDouble(POSITION_SL), PositionGetDouble(POSITION_TP));
+                   PositionGetDouble(POSITION_SL), PositionGetDouble(POSITION_TP), true);
         }
      }
    else if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY)
      {
       ENUM_POSITION_TYPE type = (HistoryDealGetInteger(trans.deal, DEAL_TYPE) == DEAL_TYPE_SELL)
                                  ? POSITION_TYPE_BUY : POSITION_TYPE_SELL; // closing deal is opposite side
-      EmitEvent("CLOSE", positionId, symbol, type, dealVolume, dealPrice, 0, 0);
+      EmitEvent("CLOSE", positionId, symbol, type, dealVolume, dealPrice, 0, 0, false);
      }
   }
 //+------------------------------------------------------------------+

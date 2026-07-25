@@ -4,7 +4,7 @@ Deux Expert Advisors par plateforme (MQL4 pour MT4, MQL5 pour MT5), qui font le 
 
 ## Rôles
 
-- **SignalPublisher** : à installer sur le compte **source** (celui qu'on copie). Détecte OPEN/MODIFY/CLOSE et écrit un fichier JSON par événement dans `MQL4|MQL5/Files/edgeflow/out/`.
+- **SignalPublisher** : à installer sur le compte **source** (celui qu'on copie). Détecte OPEN/MODIFY/CLOSE et écrit un fichier JSON par événement dans `MQL4|MQL5/Files/edgeflow/out/`. Sur un événement OPEN, il joint aussi les `ContextCandleCount` dernières bougies H1 (30 par défaut) du symbole — c'est la matière première utilisée côté Python pour détecter imbalance/liquidité/cassure de structure/order block (`engine/smc_analysis.py`).
 - **CommandExecutor** : à installer sur **chaque compte cible**. Lit les ordres écrits par le moteur Python dans `edgeflow/in/`, les exécute, et publie l'équité du compte toutes les 500 ms dans `edgeflow/heartbeat.json` (indispensable pour le calcul de risque proportionnel).
 
 ## Installation

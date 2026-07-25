@@ -5,6 +5,16 @@ par `engine/db.py` en phase 1), qu'elle en extraie les caractéristiques
 communes, puis qu'elle scanne le marché en direct pour repérer les mêmes
 configurations.
 
+**Mise à jour** : la détection Smart Money Concepts (imbalance, prise de
+liquidité, cassure de structure, order block) tourne déjà à chaque entrée —
+voir `engine/smc_analysis.py`. C'est la brique de base : les mêmes
+détecteurs, appliqués non plus seulement au moment de l'entrée mais en
+continu sur le flux de marché en direct, sont ce qui permettra de repérer
+"ce même pattern" en train de se former ailleurs. Ce dossier reste vide tant
+qu'il n'y a pas assez d'historique réel (`positions.context_json`) pour
+juger ce qui, dans ces patterns détectés, correspond réellement à tes bons
+trades.
+
 Ce dossier est un espace réservé volontairement vide — il ne sera construit
 qu'une fois le copieur (phase 1) tourne de façon fiable sur au moins un
 compte réel, pour deux raisons :

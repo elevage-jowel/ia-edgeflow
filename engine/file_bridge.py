@@ -28,7 +28,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Iterator
 
-from .models import CopyCommand, SignalEvent, Side, TradeSignal
+from .models import Candle, CopyCommand, SignalEvent, Side, TradeSignal
 
 
 def _atomic_write_json(directory: Path, filename: str, payload: dict) -> None:
@@ -58,6 +58,13 @@ class SignalInbox:
             except (json.JSONDecodeError, OSError):
                 # File is still being written or is corrupt; try again next poll.
                 continue
+            context_candles = [
+                Candle(
+                    time=str(c["time"]), open=float(c["open"]), high=float(c["high"]),
+                    low=float(c["low"]), close=float(c["close"]),
+                )
+                for c in raw.get("context_candles", [])
+            ]
             signal = TradeSignal(
                 source_account_id=self.source_account_id,
                 source_ticket=int(raw["ticket"]),
@@ -70,6 +77,7 @@ class SignalInbox:
                 take_profit=float(raw["take_profit"]),
                 source_equity=float(raw["equity"]),
                 timestamp=str(raw["timestamp"]),
+                context_candles=context_candles,
             )
             yield path, signal
 

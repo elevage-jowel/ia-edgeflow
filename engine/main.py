@@ -4,8 +4,10 @@ Run with:  python -m engine.main config/config.yaml
 """
 from __future__ import annotations
 
+import json
 import sys
 import time
+from dataclasses import asdict
 from datetime import date
 
 from . import db
@@ -16,6 +18,7 @@ from .kill_switch import KillSwitch
 from .models import CopyCommand
 from .risk_engine import RiskEngineError, compute_target_volume
 from .scoring import score_position
+from .smc_analysis import analyze_entry_context
 
 
 def run_once(cfg: EngineConfig, inbox: SignalInbox, outboxes: dict[str, CommandOutbox],
@@ -132,6 +135,17 @@ def run_once(cfg: EngineConfig, inbox: SignalInbox, outboxes: dict[str, CommandO
                     target_risk_pct=target.risk_pct, target_spec=spec,
                     actual_volume=volume,
                 )
+
+                context_json = None
+                has_fvg = has_grab = has_bos = has_ob = False
+                if signal.context_candles:
+                    context = analyze_entry_context(signal.context_candles)
+                    has_fvg = len(context.fair_value_gaps) > 0
+                    has_grab = len(context.liquidity_grabs) > 0
+                    has_bos = len(context.breaks_of_structure) > 0
+                    has_ob = len(context.order_blocks) > 0
+                    context_json = json.dumps(asdict(context))
+
                 db.open_position(
                     conn, source_account_id=signal.source_account_id,
                     source_ticket=signal.source_ticket, target_account_id=target.id,
@@ -141,6 +155,9 @@ def run_once(cfg: EngineConfig, inbox: SignalInbox, outboxes: dict[str, CommandO
                     risk_pct_intended=target.risk_pct, rr_ratio=score.rr_ratio,
                     risk_deviation_pct=score.risk_deviation_pct,
                     quality_score=score.quality_score,
+                    has_fvg=has_fvg, has_liquidity_grab=has_grab,
+                    has_bos=has_bos, has_order_block=has_ob,
+                    context_json=context_json,
                 )
 
         inbox.mark_processed(path)

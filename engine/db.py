@@ -50,6 +50,13 @@ CREATE TABLE IF NOT EXISTS positions (
     rr_ratio REAL,
     risk_deviation_pct REAL NOT NULL,
     quality_score REAL NOT NULL,
+    -- SMC entry-context (engine/smc_analysis.py): quick boolean flags for
+    -- filtering, plus the full detected context as JSON for later reuse.
+    has_fvg INTEGER NOT NULL DEFAULT 0,
+    has_liquidity_grab INTEGER NOT NULL DEFAULT 0,
+    has_bos INTEGER NOT NULL DEFAULT 0,
+    has_order_block INTEGER NOT NULL DEFAULT 0,
+    context_json TEXT,
     status TEXT NOT NULL DEFAULT 'OPEN',
     opened_at TEXT NOT NULL DEFAULT (datetime('now')),
     closed_at TEXT,
@@ -120,6 +127,11 @@ def open_position(
     rr_ratio: float | None,
     risk_deviation_pct: float,
     quality_score: float,
+    has_fvg: bool = False,
+    has_liquidity_grab: bool = False,
+    has_bos: bool = False,
+    has_order_block: bool = False,
+    context_json: str | None = None,
 ) -> None:
     conn.execute(
         """
@@ -127,13 +139,16 @@ def open_position(
             source_account_id, source_ticket, target_account_id, symbol, side,
             entry_price, stop_loss, take_profit, target_volume,
             risk_pct_intended, rr_ratio, risk_deviation_pct, quality_score,
+            has_fvg, has_liquidity_grab, has_bos, has_order_block, context_json,
             status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
         """,
         (
             source_account_id, source_ticket, target_account_id, symbol, side,
             entry_price, stop_loss, take_profit, target_volume,
             risk_pct_intended, rr_ratio, risk_deviation_pct, quality_score,
+            int(has_fvg), int(has_liquidity_grab), int(has_bos), int(has_order_block),
+            context_json,
         ),
     )
     conn.commit()

@@ -1,7 +1,7 @@
 """Core data structures shared across the copier engine."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
@@ -15,6 +15,17 @@ class SignalEvent(str, Enum):
     OPEN = "OPEN"
     MODIFY = "MODIFY"
     CLOSE = "CLOSE"
+
+
+@dataclass(frozen=True)
+class Candle:
+    """One H1 bar, as sent by the EA for SMC entry-context analysis."""
+
+    time: str
+    open: float
+    high: float
+    low: float
+    close: float
 
 
 @dataclass(frozen=True)
@@ -32,6 +43,9 @@ class TradeSignal:
     take_profit: float
     source_equity: float
     timestamp: str
+    # Recent H1 candles leading up to the entry, only populated on OPEN
+    # events -- the raw material for SMC entry-context analysis.
+    context_candles: list[Candle] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
