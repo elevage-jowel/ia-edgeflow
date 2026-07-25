@@ -53,6 +53,14 @@ cp config/config.example.yaml config/config.yaml   # puis éditer les chemins r�
 
 Pour le déploiement complet sur Hostinger (choix du plan VPS, installation MetaTrader sous Wine, services systemd), voir **`deploy/hostinger-setup.md`**.
 
+## Robustesse
+
+- Toute erreur inattendue en copiant vers une cible (fichier corrompu, écriture disque, etc.) est journalisée et n'interrompt jamais le service — elle est isolée à ce trade/cette cible (`SKIPPED_UNEXPECTED_ERROR` dans `copy_log`), le moteur continue de tourner.
+- Un fichier de signal JSON valide mais incomplet (bug EA) est mis en quarantaine dans `out/error/` plutôt que de bloquer indéfiniment le pipeline.
+- `config/config.yaml` mal formé échoue au démarrage avec un message clair (`ConfigError`) plutôt qu'un `KeyError` cryptique.
+- SQLite tourne en mode WAL pour que le dashboard puisse lire pendant que le moteur écrit, sans erreur "database is locked".
+- Le service s'arrête proprement sur `SIGTERM`/`SIGINT` (utile pour `systemctl stop`), et les logs sont structurés (niveau, horodatage) au lieu de simples `print`.
+
 ## Avant de connecter un compte réel
 
 - Teste d'abord sur un **compte démo** de bout en bout (ouverture, modification, clôture) et vérifie le dashboard.

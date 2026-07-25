@@ -22,6 +22,7 @@ Protocol:
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from dataclasses import asdict
@@ -29,6 +30,8 @@ from pathlib import Path
 from typing import Iterator
 
 from .models import Candle, CopyCommand, SignalEvent, Side, TradeSignal
+
+logger = logging.getLogger(__name__)
 
 
 def _atomic_write_json(directory: Path, filename: str, payload: dict) -> None:
@@ -45,6 +48,7 @@ class SignalInbox:
     def __init__(self, source_files_dir: Path, source_account_id: str):
         self.out_dir = source_files_dir / "out"
         self.processed_dir = self.out_dir / "processed"
+        self.error_dir = self.out_dir / "error"
         self.source_account_id = source_account_id
 
     def poll(self) -> Iterator[tuple[Path, TradeSignal]]:
@@ -56,30 +60,48 @@ class SignalInbox:
             try:
                 raw = json.loads(path.read_text())
             except (json.JSONDecodeError, OSError):
-                # File is still being written or is corrupt; try again next poll.
+                # File is still mid-write (we didn't see the atomic rename
+                # complete yet); try again next poll rather than quarantining.
                 continue
-            context_candles = [
-                Candle(
-                    time=str(c["time"]), open=float(c["open"]), high=float(c["high"]),
-                    low=float(c["low"]), close=float(c["close"]),
-                )
-                for c in raw.get("context_candles", [])
-            ]
-            signal = TradeSignal(
-                source_account_id=self.source_account_id,
-                source_ticket=int(raw["ticket"]),
-                event=SignalEvent(raw["event"]),
-                symbol=str(raw["symbol"]),
-                side=Side(raw["side"]),
-                volume=float(raw["volume"]),
-                entry_price=float(raw["entry_price"]),
-                stop_loss=float(raw["stop_loss"]),
-                take_profit=float(raw["take_profit"]),
-                source_equity=float(raw["equity"]),
-                timestamp=str(raw["timestamp"]),
-                context_candles=context_candles,
-            )
+
+            try:
+                signal = self._parse_signal(raw)
+            except (KeyError, TypeError, ValueError) as exc:
+                # Valid JSON but the wrong shape -- an EA bug, not a torn
+                # write. Reprocessing this every poll would wedge the whole
+                # pipeline behind one bad file, so quarantine it instead.
+                logger.error("malformed signal file %s, moving to error/: %s", path, exc)
+                self._quarantine(path)
+                continue
+
             yield path, signal
+
+    def _parse_signal(self, raw: dict) -> TradeSignal:
+        context_candles = [
+            Candle(
+                time=str(c["time"]), open=float(c["open"]), high=float(c["high"]),
+                low=float(c["low"]), close=float(c["close"]),
+            )
+            for c in raw.get("context_candles", [])
+        ]
+        return TradeSignal(
+            source_account_id=self.source_account_id,
+            source_ticket=int(raw["ticket"]),
+            event=SignalEvent(raw["event"]),
+            symbol=str(raw["symbol"]),
+            side=Side(raw["side"]),
+            volume=float(raw["volume"]),
+            entry_price=float(raw["entry_price"]),
+            stop_loss=float(raw["stop_loss"]),
+            take_profit=float(raw["take_profit"]),
+            source_equity=float(raw["equity"]),
+            timestamp=str(raw["timestamp"]),
+            context_candles=context_candles,
+        )
+
+    def _quarantine(self, path: Path) -> None:
+        self.error_dir.mkdir(parents=True, exist_ok=True)
+        path.rename(self.error_dir / path.name)
 
     def mark_processed(self, path: Path) -> None:
         self.processed_dir.mkdir(parents=True, exist_ok=True)

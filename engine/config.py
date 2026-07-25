@@ -14,6 +14,12 @@ import yaml
 from .models import SymbolSpec
 
 
+class ConfigError(ValueError):
+    """Raised for a malformed or incomplete config.yaml, with a message
+    pointing at the missing/bad field -- a raw KeyError here is useless to
+    whoever is debugging a VPS deployment at 2am."""
+
+
 @dataclass(frozen=True)
 class TargetAccountConfig:
     id: str
@@ -38,9 +44,19 @@ class EngineConfig:
     targets: list[TargetAccountConfig] = field(default_factory=list)
 
 
-def _load_symbol_specs(raw: dict) -> dict[str, SymbolSpec]:
+def _require(d: dict, key: str, where: str):
+    if key not in d:
+        raise ConfigError(f"missing required field '{key}' in {where}")
+    return d[key]
+
+
+def _load_symbol_specs(raw: dict, target_id: str) -> dict[str, SymbolSpec]:
     specs: dict[str, SymbolSpec] = {}
+    required = ("contract_size", "tick_size", "tick_value", "volume_step", "volume_min", "volume_max")
     for symbol, s in raw.items():
+        where = f"targets[{target_id}].symbol_specs[{symbol}]"
+        for key in required:
+            _require(s, key, where)
         specs[symbol] = SymbolSpec(
             symbol=symbol,
             contract_size=float(s["contract_size"]),
@@ -55,22 +71,36 @@ def _load_symbol_specs(raw: dict) -> dict[str, SymbolSpec]:
 
 def load_config(path: str | Path) -> EngineConfig:
     path = Path(path)
-    raw = yaml.safe_load(path.read_text())
+    if not path.exists():
+        raise ConfigError(f"config file not found: {path}")
 
-    source_raw = raw["source_account"]
+    try:
+        raw = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"invalid YAML in {path}: {exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{path} must contain a YAML mapping at the top level")
+
+    source_raw = _require(raw, "source_account", "config")
     source = SourceAccountConfig(
-        id=source_raw["id"],
-        files_dir=Path(source_raw["files_dir"]).expanduser(),
+        id=_require(source_raw, "id", "source_account"),
+        files_dir=Path(_require(source_raw, "files_dir", "source_account")).expanduser(),
     )
 
+    targets_raw = _require(raw, "targets", "config")
+    if not targets_raw:
+        raise ConfigError("'targets' is empty -- at least one target account is required")
+
     targets = []
-    for t in raw["targets"]:
+    for t in targets_raw:
+        target_id = _require(t, "id", "targets[]")
         targets.append(
             TargetAccountConfig(
-                id=t["id"],
-                files_dir=Path(t["files_dir"]).expanduser(),
-                risk_pct=float(t["risk_pct"]),
-                symbol_specs=_load_symbol_specs(t["symbol_specs"]),
+                id=target_id,
+                files_dir=Path(_require(t, "files_dir", f"targets[{target_id}]")).expanduser(),
+                risk_pct=float(_require(t, "risk_pct", f"targets[{target_id}]")),
+                symbol_specs=_load_symbol_specs(_require(t, "symbol_specs", f"targets[{target_id}]"), target_id),
             )
         )
 

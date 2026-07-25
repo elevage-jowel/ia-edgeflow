@@ -62,13 +62,22 @@ CREATE TABLE IF NOT EXISTS positions (
     closed_at TEXT,
     UNIQUE(source_account_id, source_ticket, target_account_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_copy_log_ticket ON copy_log(source_account_id, source_ticket);
+CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol);
+CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 """
 
 
 @contextmanager
 def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    # WAL mode lets the dashboard read (`app.py`) while the engine keeps
+    # writing without hitting "database is locked"; busy_timeout retries
+    # briefly instead of failing outright on the rare write/write clash.
+    conn = sqlite3.connect(db_path, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=10000")
     try:
         conn.executescript(SCHEMA)
         conn.commit()

@@ -37,13 +37,18 @@ def read_heartbeat(target_files_dir: Path, max_age_seconds: float = 15.0) -> Hea
     if not path.exists():
         raise HeartbeatError(f"no heartbeat file at {path}; is the target EA running?")
 
-    raw = json.loads(path.read_text())
-    mtime = path.stat().st_mtime
-    hb = Heartbeat(
-        equity=float(raw["equity"]),
-        balance=float(raw["balance"]),
-        updated_at=mtime,
-    )
+    try:
+        raw = json.loads(path.read_text())
+        mtime = path.stat().st_mtime
+        hb = Heartbeat(
+            equity=float(raw["equity"]),
+            balance=float(raw["balance"]),
+            updated_at=mtime,
+        )
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError, OSError) as exc:
+        # Most likely we read the file mid-write by the EA; treat it the
+        # same as "no heartbeat yet" rather than crashing the engine loop.
+        raise HeartbeatError(f"unreadable heartbeat at {path}: {exc}") from exc
 
     age = time.time() - hb.updated_at
     if age > max_age_seconds:

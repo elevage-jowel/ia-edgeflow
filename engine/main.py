@@ -5,20 +5,158 @@ Run with:  python -m engine.main config/config.yaml
 from __future__ import annotations
 
 import json
+import logging
+import signal as signal_module
 import sys
 import time
 from dataclasses import asdict
 from datetime import date
 
 from . import db
-from .config import EngineConfig, load_config
+from .config import ConfigError, EngineConfig, TargetAccountConfig, load_config
 from .file_bridge import CommandOutbox, SignalInbox
 from .heartbeat import HeartbeatError, read_heartbeat
 from .kill_switch import KillSwitch
-from .models import CopyCommand
+from .models import CopyCommand, TradeSignal
 from .risk_engine import RiskEngineError, compute_target_volume
 from .scoring import score_position
 from .smc_analysis import analyze_entry_context
+
+logger = logging.getLogger(__name__)
+
+
+def _process_target(signal: TradeSignal, target: TargetAccountConfig,
+                     outbox: CommandOutbox, killed: bool, conn) -> None:
+    if signal.event.value == "CLOSE":
+        # Closing exposure is always allowed, even while killed.
+        outbox.send(CopyCommand(
+            target_account_id=target.id,
+            source_ticket=signal.source_ticket,
+            event=signal.event,
+            symbol=signal.symbol,
+            side=signal.side,
+            volume=signal.volume,
+            stop_loss=signal.stop_loss,
+            take_profit=signal.take_profit,
+        ))
+        db.log_copy(
+            conn, source_account_id=signal.source_account_id,
+            source_ticket=signal.source_ticket, target_account_id=target.id,
+            event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
+            source_volume=signal.volume, target_volume=None,
+            entry_price=signal.entry_price, stop_loss=signal.stop_loss,
+            take_profit=signal.take_profit, status="CLOSE_FORWARDED",
+        )
+        db.close_position(
+            conn, source_account_id=signal.source_account_id,
+            source_ticket=signal.source_ticket, target_account_id=target.id,
+        )
+        return
+
+    if killed:
+        db.log_copy(
+            conn, source_account_id=signal.source_account_id,
+            source_ticket=signal.source_ticket, target_account_id=target.id,
+            event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
+            source_volume=signal.volume, target_volume=None,
+            entry_price=signal.entry_price, stop_loss=signal.stop_loss,
+            take_profit=signal.take_profit, status="SKIPPED_KILL_SWITCH",
+        )
+        return
+
+    spec = target.symbol_specs.get(signal.symbol)
+    if spec is None:
+        db.log_copy(
+            conn, source_account_id=signal.source_account_id,
+            source_ticket=signal.source_ticket, target_account_id=target.id,
+            event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
+            source_volume=signal.volume, target_volume=None,
+            entry_price=signal.entry_price, stop_loss=signal.stop_loss,
+            take_profit=signal.take_profit, status="SKIPPED_NO_SYMBOL_SPEC",
+            detail=f"no symbol_specs entry for {signal.symbol} on {target.id}",
+        )
+        return
+
+    try:
+        heartbeat = read_heartbeat(target.files_dir)
+    except HeartbeatError as exc:
+        db.log_copy(
+            conn, source_account_id=signal.source_account_id,
+            source_ticket=signal.source_ticket, target_account_id=target.id,
+            event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
+            source_volume=signal.volume, target_volume=None,
+            entry_price=signal.entry_price, stop_loss=signal.stop_loss,
+            take_profit=signal.take_profit, status="SKIPPED_NO_HEARTBEAT",
+            detail=str(exc),
+        )
+        return
+
+    try:
+        volume = compute_target_volume(
+            signal, target_equity=heartbeat.equity,
+            target_risk_pct=target.risk_pct, target_spec=spec,
+        )
+    except RiskEngineError as exc:
+        db.log_copy(
+            conn, source_account_id=signal.source_account_id,
+            source_ticket=signal.source_ticket, target_account_id=target.id,
+            event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
+            source_volume=signal.volume, target_volume=None,
+            entry_price=signal.entry_price, stop_loss=signal.stop_loss,
+            take_profit=signal.take_profit, status="SKIPPED_RISK_ERROR",
+            detail=str(exc),
+        )
+        return
+
+    outbox.send(CopyCommand(
+        target_account_id=target.id,
+        source_ticket=signal.source_ticket,
+        event=signal.event,
+        symbol=signal.symbol,
+        side=signal.side,
+        volume=volume,
+        stop_loss=signal.stop_loss,
+        take_profit=signal.take_profit,
+    ))
+    db.log_copy(
+        conn, source_account_id=signal.source_account_id,
+        source_ticket=signal.source_ticket, target_account_id=target.id,
+        event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
+        source_volume=signal.volume, target_volume=volume,
+        entry_price=signal.entry_price, stop_loss=signal.stop_loss,
+        take_profit=signal.take_profit, status="COPIED",
+    )
+
+    if signal.event.value == "OPEN":
+        score = score_position(
+            signal, target_equity=heartbeat.equity,
+            target_risk_pct=target.risk_pct, target_spec=spec,
+            actual_volume=volume,
+        )
+
+        context_json = None
+        has_fvg = has_grab = has_bos = has_ob = False
+        if signal.context_candles:
+            context = analyze_entry_context(signal.context_candles)
+            has_fvg = len(context.fair_value_gaps) > 0
+            has_grab = len(context.liquidity_grabs) > 0
+            has_bos = len(context.breaks_of_structure) > 0
+            has_ob = len(context.order_blocks) > 0
+            context_json = json.dumps(asdict(context))
+
+        db.open_position(
+            conn, source_account_id=signal.source_account_id,
+            source_ticket=signal.source_ticket, target_account_id=target.id,
+            symbol=signal.symbol, side=signal.side.value,
+            entry_price=signal.entry_price, stop_loss=signal.stop_loss,
+            take_profit=signal.take_profit, target_volume=volume,
+            risk_pct_intended=target.risk_pct, rr_ratio=score.rr_ratio,
+            risk_deviation_pct=score.risk_deviation_pct,
+            quality_score=score.quality_score,
+            has_fvg=has_fvg, has_liquidity_grab=has_grab,
+            has_bos=has_bos, has_order_block=has_ob,
+            context_json=context_json,
+        )
 
 
 def run_once(cfg: EngineConfig, inbox: SignalInbox, outboxes: dict[str, CommandOutbox],
@@ -27,153 +165,71 @@ def run_once(cfg: EngineConfig, inbox: SignalInbox, outboxes: dict[str, CommandO
         killed = kill_switch.is_active(signal.source_equity, date.today().isoformat())
 
         for target in cfg.targets:
-            outbox = outboxes[target.id]
-
-            if signal.event.value == "CLOSE":
-                # Closing exposure is always allowed, even while killed.
-                outbox.send(CopyCommand(
-                    target_account_id=target.id,
-                    source_ticket=signal.source_ticket,
-                    event=signal.event,
-                    symbol=signal.symbol,
-                    side=signal.side,
-                    volume=signal.volume,
-                    stop_loss=signal.stop_loss,
-                    take_profit=signal.take_profit,
-                ))
-                db.log_copy(
-                    conn, source_account_id=signal.source_account_id,
-                    source_ticket=signal.source_ticket, target_account_id=target.id,
-                    event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
-                    source_volume=signal.volume, target_volume=None,
-                    entry_price=signal.entry_price, stop_loss=signal.stop_loss,
-                    take_profit=signal.take_profit, status="CLOSE_FORWARDED",
-                )
-                db.close_position(
-                    conn, source_account_id=signal.source_account_id,
-                    source_ticket=signal.source_ticket, target_account_id=target.id,
-                )
-                continue
-
-            if killed:
-                db.log_copy(
-                    conn, source_account_id=signal.source_account_id,
-                    source_ticket=signal.source_ticket, target_account_id=target.id,
-                    event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
-                    source_volume=signal.volume, target_volume=None,
-                    entry_price=signal.entry_price, stop_loss=signal.stop_loss,
-                    take_profit=signal.take_profit, status="SKIPPED_KILL_SWITCH",
-                )
-                continue
-
-            spec = target.symbol_specs.get(signal.symbol)
-            if spec is None:
-                db.log_copy(
-                    conn, source_account_id=signal.source_account_id,
-                    source_ticket=signal.source_ticket, target_account_id=target.id,
-                    event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
-                    source_volume=signal.volume, target_volume=None,
-                    entry_price=signal.entry_price, stop_loss=signal.stop_loss,
-                    take_profit=signal.take_profit, status="SKIPPED_NO_SYMBOL_SPEC",
-                    detail=f"no symbol_specs entry for {signal.symbol} on {target.id}",
-                )
-                continue
-
             try:
-                heartbeat = read_heartbeat(target.files_dir)
-            except HeartbeatError as exc:
+                _process_target(signal, target, outboxes[target.id], killed, conn)
+            except Exception as exc:  # noqa: BLE001 -- one bad target must never take down the service
+                logger.exception(
+                    "unexpected error copying ticket %s (%s) to %s",
+                    signal.source_ticket, signal.symbol, target.id,
+                )
                 db.log_copy(
                     conn, source_account_id=signal.source_account_id,
                     source_ticket=signal.source_ticket, target_account_id=target.id,
                     event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
                     source_volume=signal.volume, target_volume=None,
                     entry_price=signal.entry_price, stop_loss=signal.stop_loss,
-                    take_profit=signal.take_profit, status="SKIPPED_NO_HEARTBEAT",
+                    take_profit=signal.take_profit, status="SKIPPED_UNEXPECTED_ERROR",
                     detail=str(exc),
                 )
-                continue
 
-            try:
-                volume = compute_target_volume(
-                    signal, target_equity=heartbeat.equity,
-                    target_risk_pct=target.risk_pct, target_spec=spec,
-                )
-            except RiskEngineError as exc:
-                db.log_copy(
-                    conn, source_account_id=signal.source_account_id,
-                    source_ticket=signal.source_ticket, target_account_id=target.id,
-                    event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
-                    source_volume=signal.volume, target_volume=None,
-                    entry_price=signal.entry_price, stop_loss=signal.stop_loss,
-                    take_profit=signal.take_profit, status="SKIPPED_RISK_ERROR",
-                    detail=str(exc),
-                )
-                continue
+        try:
+            inbox.mark_processed(path)
+        except OSError:
+            logger.exception("failed to archive processed signal file %s", path)
 
-            outbox.send(CopyCommand(
-                target_account_id=target.id,
-                source_ticket=signal.source_ticket,
-                event=signal.event,
-                symbol=signal.symbol,
-                side=signal.side,
-                volume=volume,
-                stop_loss=signal.stop_loss,
-                take_profit=signal.take_profit,
-            ))
-            db.log_copy(
-                conn, source_account_id=signal.source_account_id,
-                source_ticket=signal.source_ticket, target_account_id=target.id,
-                event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
-                source_volume=signal.volume, target_volume=volume,
-                entry_price=signal.entry_price, stop_loss=signal.stop_loss,
-                take_profit=signal.take_profit, status="COPIED",
-            )
 
-            if signal.event.value == "OPEN":
-                score = score_position(
-                    signal, target_equity=heartbeat.equity,
-                    target_risk_pct=target.risk_pct, target_spec=spec,
-                    actual_volume=volume,
-                )
-
-                context_json = None
-                has_fvg = has_grab = has_bos = has_ob = False
-                if signal.context_candles:
-                    context = analyze_entry_context(signal.context_candles)
-                    has_fvg = len(context.fair_value_gaps) > 0
-                    has_grab = len(context.liquidity_grabs) > 0
-                    has_bos = len(context.breaks_of_structure) > 0
-                    has_ob = len(context.order_blocks) > 0
-                    context_json = json.dumps(asdict(context))
-
-                db.open_position(
-                    conn, source_account_id=signal.source_account_id,
-                    source_ticket=signal.source_ticket, target_account_id=target.id,
-                    symbol=signal.symbol, side=signal.side.value,
-                    entry_price=signal.entry_price, stop_loss=signal.stop_loss,
-                    take_profit=signal.take_profit, target_volume=volume,
-                    risk_pct_intended=target.risk_pct, rr_ratio=score.rr_ratio,
-                    risk_deviation_pct=score.risk_deviation_pct,
-                    quality_score=score.quality_score,
-                    has_fvg=has_fvg, has_liquidity_grab=has_grab,
-                    has_bos=has_bos, has_order_block=has_ob,
-                    context_json=context_json,
-                )
-
-        inbox.mark_processed(path)
+def _setup_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
 
 def main(config_path: str) -> None:
-    cfg = load_config(config_path)
+    _setup_logging()
+
+    try:
+        cfg = load_config(config_path)
+    except ConfigError as exc:
+        logger.error("config error: %s", exc)
+        sys.exit(1)
+
     inbox = SignalInbox(cfg.source.files_dir, cfg.source.id)
     outboxes = {t.id: CommandOutbox(t.files_dir) for t in cfg.targets}
     kill_switch = KillSwitch(cfg.kill_switch_file, cfg.max_daily_drawdown_pct)
 
+    stop = {"requested": False}
+
+    def _request_stop(signum, frame):  # noqa: ARG001 -- required signal handler signature
+        logger.info("received signal %s, shutting down after current cycle", signum)
+        stop["requested"] = True
+
+    signal_module.signal(signal_module.SIGTERM, _request_stop)
+    signal_module.signal(signal_module.SIGINT, _request_stop)
+
     with db.connect(cfg.db_path) as conn:
-        print(f"edgeflow engine started: source={cfg.source.id} targets={[t.id for t in cfg.targets]}")
-        while True:
-            run_once(cfg, inbox, outboxes, kill_switch, conn)
+        logger.info(
+            "edgeflow engine started: source=%s targets=%s",
+            cfg.source.id, [t.id for t in cfg.targets],
+        )
+        while not stop["requested"]:
+            try:
+                run_once(cfg, inbox, outboxes, kill_switch, conn)
+            except Exception:  # noqa: BLE001 -- a bad poll cycle must not crash the service
+                logger.exception("unexpected error in run_once, continuing")
             time.sleep(cfg.poll_interval_seconds)
+
+    logger.info("edgeflow engine stopped")
 
 
 if __name__ == "__main__":
