@@ -15,6 +15,7 @@ from .heartbeat import HeartbeatError, read_heartbeat
 from .kill_switch import KillSwitch
 from .models import CopyCommand
 from .risk_engine import RiskEngineError, compute_target_volume
+from .scoring import score_position
 
 
 def run_once(cfg: EngineConfig, inbox: SignalInbox, outboxes: dict[str, CommandOutbox],
@@ -44,6 +45,10 @@ def run_once(cfg: EngineConfig, inbox: SignalInbox, outboxes: dict[str, CommandO
                     source_volume=signal.volume, target_volume=None,
                     entry_price=signal.entry_price, stop_loss=signal.stop_loss,
                     take_profit=signal.take_profit, status="CLOSE_FORWARDED",
+                )
+                db.close_position(
+                    conn, source_account_id=signal.source_account_id,
+                    source_ticket=signal.source_ticket, target_account_id=target.id,
                 )
                 continue
 
@@ -120,6 +125,23 @@ def run_once(cfg: EngineConfig, inbox: SignalInbox, outboxes: dict[str, CommandO
                 entry_price=signal.entry_price, stop_loss=signal.stop_loss,
                 take_profit=signal.take_profit, status="COPIED",
             )
+
+            if signal.event.value == "OPEN":
+                score = score_position(
+                    signal, target_equity=heartbeat.equity,
+                    target_risk_pct=target.risk_pct, target_spec=spec,
+                    actual_volume=volume,
+                )
+                db.open_position(
+                    conn, source_account_id=signal.source_account_id,
+                    source_ticket=signal.source_ticket, target_account_id=target.id,
+                    symbol=signal.symbol, side=signal.side.value,
+                    entry_price=signal.entry_price, stop_loss=signal.stop_loss,
+                    take_profit=signal.take_profit, target_volume=volume,
+                    risk_pct_intended=target.risk_pct, rr_ratio=score.rr_ratio,
+                    risk_deviation_pct=score.risk_deviation_pct,
+                    quality_score=score.quality_score,
+                )
 
         inbox.mark_processed(path)
 

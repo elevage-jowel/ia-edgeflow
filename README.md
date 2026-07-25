@@ -28,9 +28,11 @@ volume_cible = risque_$ ÷ (distance_SL en ticks × valeur_du_tick_cible)
 
 Si le volume calculé tombe sous le minimum du broker, le trade est **ignoré**, jamais arrondi vers le haut — on ne sur-expose jamais un compte pour forcer une copie.
 
+Chaque position copiée avec succès est enregistrée dans la table `positions` (voir `engine/db.py`) avec un **score de qualité 0-100** (`engine/scoring.py`) : ratio risque/récompense de la position (poids 70) + écart entre le risque visé et le risque réellement pris après arrondi du volume (poids 30). Ce score et l'historique des positions sont visibles dans le dashboard, et constituent la base de données que la phase 2 (reconnaissance de patterns) utilisera.
+
 ## Structure du repo
 
-- `engine/` — moteur Python (risque, bridge fichiers, base SQLite, kill-switch, boucle principale).
+- `engine/` — moteur Python (risque, score de qualité, bridge fichiers, base SQLite, kill-switch, boucle principale).
 - `mql/` — EA MetaTrader (MQL4 et MQL5) : `SignalPublisher` (source) et `CommandExecutor` (cible).
 - `dashboard/` — statut en direct + bouton d'arrêt d'urgence (FastAPI).
 - `deploy/` — guide de déploiement sur Hostinger VPS + unités systemd.

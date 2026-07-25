@@ -18,6 +18,11 @@
   <p>État : <span id="badge" class="badge">...</span></p>
   <button onclick="post('/api/kill')">Arrêt d'urgence</button>
   <button onclick="post('/api/resume')">Reprendre</button>
+  <h2>Positions enregistrées</h2>
+  <table id="positions"><thead>
+    <tr><th>Ouverte</th><th>Symbole</th><th>Sens</th><th>Volume</th><th>R:R</th><th>Écart risque</th><th>Score</th><th>Statut</th></tr>
+  </thead><tbody></tbody></table>
+
   <h2>Derniers événements</h2>
   <table id="events"><thead>
     <tr><th>Heure</th><th>Source</th><th>Cible</th><th>Symbole</th><th>Statut</th></tr>
@@ -37,6 +42,19 @@ async function refresh() {
     tr.innerHTML = `<td>${e.created_at}</td><td>${e.source_account_id}</td>` +
       `<td>${e.target_account_id}</td><td>${e.symbol}</td><td>${e.status}</td>`;
     tbody.appendChild(tr);
+  }
+
+  const pr = await fetch('/api/positions');
+  const pdata = await pr.json();
+  const ptbody = document.querySelector('#positions tbody');
+  ptbody.innerHTML = '';
+  for (const p of pdata.positions) {
+    const tr = document.createElement('tr');
+    const rr = p.rr_ratio === null ? '—' : p.rr_ratio.toFixed(2);
+    tr.innerHTML = `<td>${p.opened_at}</td><td>${p.symbol}</td><td>${p.side}</td>` +
+      `<td>${p.target_volume}</td><td>${rr}</td><td>${p.risk_deviation_pct}%</td>` +
+      `<td>${p.quality_score}</td><td>${p.status}</td>`;
+    ptbody.appendChild(tr);
   }
 }
 async function post(path) {

@@ -14,6 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
+from engine import db
 from engine.config import load_config
 
 CONFIG_PATH = os.environ.get("EDGEFLOW_CONFIG", "config/config.yaml")
@@ -46,6 +47,16 @@ def status():
         "targets": [t.id for t in cfg.targets],
         "recent_events": recent,
     }
+
+
+@app.get("/api/positions")
+def positions():
+    cfg = _cfg()
+    if not cfg.db_path.exists():
+        return {"positions": []}
+    with db.connect(cfg.db_path) as conn:
+        rows = db.list_positions(conn, limit=100)
+        return {"positions": [dict(r) for r in rows]}
 
 
 @app.post("/api/kill")

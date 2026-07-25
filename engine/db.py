@@ -31,6 +31,30 @@ CREATE TABLE IF NOT EXISTS copy_log (
     status TEXT NOT NULL,
     detail TEXT
 );
+
+-- One row per copied trade's full lifecycle (vs. copy_log's one row per
+-- event) -- the "enregistrer les positions pour après" record: this is
+-- the dataset phase 2 pattern matching will train on.
+CREATE TABLE IF NOT EXISTS positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_account_id TEXT NOT NULL,
+    source_ticket INTEGER NOT NULL,
+    target_account_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    stop_loss REAL NOT NULL,
+    take_profit REAL NOT NULL,
+    target_volume REAL NOT NULL,
+    risk_pct_intended REAL NOT NULL,
+    rr_ratio REAL,
+    risk_deviation_pct REAL NOT NULL,
+    quality_score REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+    closed_at TEXT,
+    UNIQUE(source_account_id, source_ticket, target_account_id)
+);
 """
 
 
@@ -39,7 +63,7 @@ def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
-        conn.execute(SCHEMA)
+        conn.executescript(SCHEMA)
         conn.commit()
         yield conn
     finally:
@@ -78,3 +102,62 @@ def log_copy(
         ),
     )
     conn.commit()
+
+
+def open_position(
+    conn: sqlite3.Connection,
+    *,
+    source_account_id: str,
+    source_ticket: int,
+    target_account_id: str,
+    symbol: str,
+    side: str,
+    entry_price: float,
+    stop_loss: float,
+    take_profit: float,
+    target_volume: float,
+    risk_pct_intended: float,
+    rr_ratio: float | None,
+    risk_deviation_pct: float,
+    quality_score: float,
+) -> None:
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO positions (
+            source_account_id, source_ticket, target_account_id, symbol, side,
+            entry_price, stop_loss, take_profit, target_volume,
+            risk_pct_intended, rr_ratio, risk_deviation_pct, quality_score,
+            status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
+        """,
+        (
+            source_account_id, source_ticket, target_account_id, symbol, side,
+            entry_price, stop_loss, take_profit, target_volume,
+            risk_pct_intended, rr_ratio, risk_deviation_pct, quality_score,
+        ),
+    )
+    conn.commit()
+
+
+def close_position(
+    conn: sqlite3.Connection,
+    *,
+    source_account_id: str,
+    source_ticket: int,
+    target_account_id: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE positions SET status = 'CLOSED', closed_at = datetime('now')
+        WHERE source_account_id = ? AND source_ticket = ? AND target_account_id = ?
+        """,
+        (source_account_id, source_ticket, target_account_id),
+    )
+    conn.commit()
+
+
+def list_positions(conn: sqlite3.Connection, limit: int = 50) -> list[sqlite3.Row]:
+    conn.row_factory = sqlite3.Row
+    return conn.execute(
+        "SELECT * FROM positions ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
