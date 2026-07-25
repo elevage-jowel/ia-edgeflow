@@ -1,0 +1,14 @@
+[Unit]
+Description=EdgeFlow copier engine
+After=network.target
+
+[Service]
+Type=simple
+User=edgeflow
+WorkingDirectory=/home/edgeflow/ia-edgeflow
+ExecStart=/home/edgeflow/ia-edgeflow/.venv/bin/python -m engine.main config/config.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

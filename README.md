@@ -1,0 +1,62 @@
+# EdgeFlow — copieur de positions risk-parity
+
+Réplique automatiquement les positions d'un compte MetaTrader (source) vers un ou plusieurs autres comptes (cibles), en risquant le **même pourcentage de capital** sur chaque compte — pas le même nombre de lots, pas un ratio d'equity naïf.
+
+## Comment ça marche
+
+```
+Compte source (MT4/MT5)          VPS Hostinger                    Compte(s) cible(s) (MT4/MT5)
+┌─────────────────────┐   fichiers   ┌──────────────────┐  fichiers  ┌─────────────────────┐
+│ EA SignalPublisher   │ ───────────▶ │ engine/ (Python)  │ ─────────▶ │ EA CommandExecutor   │
+│ détecte OPEN/MODIFY/ │              │  risk_engine.py   │            │ exécute l'ordre,     │
+│ CLOSE, écrit un JSON │              │  calcule la taille│            │ publie l'équité      │
+└─────────────────────┘              │  à risque égal    │            │ (heartbeat.json)     │
+                                      └──────────────────┘            └─────────────────────┘
+                                             │
+                                             ▼
+                                    dashboard/ (statut + arrêt d'urgence)
+                                    data/edgeflow.db (journal SQLite)
+```
+
+Le calcul central (`engine/risk_engine.py`) :
+
+```
+risque_$ = équité_cible × risk_pct
+distance_SL = |prix_entrée - stop_loss|
+volume_cible = risque_$ ÷ (distance_SL en ticks × valeur_du_tick_cible)
+```
+
+Si le volume calculé tombe sous le minimum du broker, le trade est **ignoré**, jamais arrondi vers le haut — on ne sur-expose jamais un compte pour forcer une copie.
+
+## Structure du repo
+
+- `engine/` — moteur Python (risque, bridge fichiers, base SQLite, kill-switch, boucle principale).
+- `mql/` — EA MetaTrader (MQL4 et MQL5) : `SignalPublisher` (source) et `CommandExecutor` (cible).
+- `dashboard/` — statut en direct + bouton d'arrêt d'urgence (FastAPI).
+- `deploy/` — guide de déploiement sur Hostinger VPS + unités systemd.
+- `config/` — exemple de configuration (comptes, risque par compte, specs symboles).
+- `patterns/` — phase 2 (reconnaissance de patterns), pas encore implémentée — voir `patterns/README.md`.
+- `tests/` — tests du moteur de risque (`pytest tests/`).
+
+## Démarrage rapide (local, avant tout déploiement)
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pytest tests/               # vérifie le moteur de risque
+cp config/config.example.yaml config/config.yaml   # puis éditer les chemins réels
+```
+
+Pour le déploiement complet sur Hostinger (choix du plan VPS, installation MetaTrader sous Wine, services systemd), voir **`deploy/hostinger-setup.md`**.
+
+## Avant de connecter un compte réel
+
+- Teste d'abord sur un **compte démo** de bout en bout (ouverture, modification, clôture) et vérifie le dashboard.
+- Vérifie les CGU de chaque broker concernant l'automatisation/la copie de trades.
+- `dashboard/` n'a aucune authentification — ne jamais l'exposer directement sur internet (voir `deploy/hostinger-setup.md`).
+- Le kill-switch (bouton dashboard ou `touch data/KILL_SWITCH`) bloque toute nouvelle copie mais laisse toujours passer les fermetures de position.
+
+## Feuille de route
+
+1. **Phase 1 (ce repo aujourd'hui)** — copie risk-parity, MT4/MT5, dashboard, journal SQLite.
+2. **Phase 2** — donner des trades exemples à l'IA, qu'elle en extraie le pattern et scanne le marché réel pour des setups similaires. Voir `patterns/README.md` pour l'approche envisagée.

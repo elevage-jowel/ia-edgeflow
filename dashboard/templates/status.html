@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>EdgeFlow — Statut</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  .badge { padding: .25rem .6rem; border-radius: .4rem; color: #fff; font-weight: 600; }
+  .ok { background: #1a7f37; }
+  .killed { background: #b91c1c; }
+  button { padding: .5rem 1rem; margin-right: .5rem; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: .85rem; }
+  td, th { border-bottom: 1px solid #ddd; padding: .35rem .5rem; text-align: left; }
+</style>
+</head>
+<body>
+  <h1>EdgeFlow — copieur de positions</h1>
+  <p>État : <span id="badge" class="badge">...</span></p>
+  <button onclick="post('/api/kill')">Arrêt d'urgence</button>
+  <button onclick="post('/api/resume')">Reprendre</button>
+  <h2>Derniers événements</h2>
+  <table id="events"><thead>
+    <tr><th>Heure</th><th>Source</th><th>Cible</th><th>Symbole</th><th>Statut</th></tr>
+  </thead><tbody></tbody></table>
+
+<script>
+async function refresh() {
+  const r = await fetch('/api/status');
+  const data = await r.json();
+  const badge = document.getElementById('badge');
+  badge.textContent = data.kill_switch_active ? 'ARRÊTÉ' : 'ACTIF';
+  badge.className = 'badge ' + (data.kill_switch_active ? 'killed' : 'ok');
+  const tbody = document.querySelector('#events tbody');
+  tbody.innerHTML = '';
+  for (const e of data.recent_events) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${e.created_at}</td><td>${e.source_account_id}</td>` +
+      `<td>${e.target_account_id}</td><td>${e.symbol}</td><td>${e.status}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+async function post(path) {
+  await fetch(path, { method: 'POST' });
+  refresh();
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

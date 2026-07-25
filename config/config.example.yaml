@@ -1,0 +1,35 @@
+# Copy this file to config/config.yaml and fill in real paths (that file is
+# gitignored -- it may end up containing account identifiers, never commit it).
+
+poll_interval_seconds: 0.5
+db_path: data/edgeflow.db
+kill_switch_file: data/KILL_SWITCH
+
+risk:
+  max_daily_drawdown_pct: 5.0   # auto kill-switch if source equity drops this much in a day
+
+source_account:
+  id: broker_a_source
+  # Absolute path to <Terminal>/MQL4/Files/edgeflow on the VPS filesystem
+  # (see mql/README.md for how this maps under Wine).
+  files_dir: /home/edgeflow/.wine/drive_c/Program Files/BrokerA MT4/MQL4/Files/edgeflow
+
+targets:
+  - id: broker_b_target
+    files_dir: /home/edgeflow/.wine/drive_c/Program Files/BrokerB MT5/MQL5/Files/edgeflow
+    risk_pct: 1.0   # % of THIS account's equity to risk per copied trade
+    symbol_specs:
+      EURUSD:
+        contract_size: 100000
+        tick_size: 0.00001
+        tick_value: 1.0     # account-currency value of 1 tick move, per 1.0 lot -- get this from the broker's contract specs
+        volume_step: 0.01
+        volume_min: 0.01
+        volume_max: 100
+      XAUUSD:
+        contract_size: 100
+        tick_size: 0.01
+        tick_value: 1.0
+        volume_step: 0.01
+        volume_min: 0.01
+        volume_max: 50

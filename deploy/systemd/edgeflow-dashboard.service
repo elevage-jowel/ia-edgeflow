@@ -1,0 +1,15 @@
+[Unit]
+Description=EdgeFlow status dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=edgeflow
+WorkingDirectory=/home/edgeflow/ia-edgeflow
+Environment=EDGEFLOW_CONFIG=/home/edgeflow/ia-edgeflow/config/config.yaml
+ExecStart=/home/edgeflow/ia-edgeflow/.venv/bin/uvicorn dashboard.app:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
