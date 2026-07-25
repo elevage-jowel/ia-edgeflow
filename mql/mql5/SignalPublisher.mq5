@@ -17,6 +17,11 @@ string g_scanSymbols[];
 
 int OnInit()
   {
+   // Don't rely on FileOpen implicitly creating missing subdirectories --
+   // make sure they exist up front so the very first write doesn't fail.
+   FolderCreate("edgeflow\\out\\");
+   FolderCreate("edgeflow\\market\\");
+
    if(StringLen(ScanSymbols) > 0)
      {
       StringSplit(ScanSymbols, ',', g_scanSymbols);

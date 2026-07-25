@@ -30,6 +30,11 @@ int OnInit()
    ArrayResize(g_stopLoss, 0);
    ArrayResize(g_takeProfit, 0);
 
+   // Don't rely on FileOpen implicitly creating missing subdirectories --
+   // make sure they exist up front so the very first write doesn't fail.
+   FolderCreate("edgeflow\\out\\");
+   FolderCreate("edgeflow\\market\\");
+
    // Recover state after a restart (VPS reboot, terminal update, EA
    // reload): adopt currently open positions as already-tracked instead of
    // treating them as new on the first OnTimer() tick. Without this, every

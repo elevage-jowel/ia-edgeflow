@@ -51,6 +51,10 @@ int OnInit()
    ArrayResize(g_sourceTickets, 0);
    ArrayResize(g_localTickets, 0);
 
+   // Don't rely on FileOpen implicitly creating missing subdirectories --
+   // make sure they exist up front so the very first write doesn't fail.
+   FolderCreate("edgeflow\\in\\done\\");
+
    // Recover the source-ticket -> local-ticket mapping after a restart
    // (VPS reboot, terminal update, EA reload). Without this, a position
    // already open here becomes orphaned: no MODIFY or CLOSE from the
