@@ -15,6 +15,7 @@ class SignalEvent(str, Enum):
     OPEN = "OPEN"
     MODIFY = "MODIFY"
     CLOSE = "CLOSE"
+    PARTIAL_CLOSE = "PARTIAL_CLOSE"
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,9 @@ class TradeSignal:
     event: SignalEvent
     symbol: str
     side: Side
+    # For PARTIAL_CLOSE, this is the volume STILL REMAINING on the source
+    # after the partial close (not the amount closed) -- main.py derives
+    # the target's proportional remaining size from it.
     volume: float
     entry_price: float
     stop_loss: float
@@ -77,6 +81,8 @@ class CopyCommand:
     event: SignalEvent
     symbol: str
     side: Side
+    # For PARTIAL_CLOSE, this is the DESIRED REMAINING volume on the target
+    # (the executor EA closes currentVolume - volume, not `volume` itself).
     volume: float
     stop_loss: float
     take_profit: float

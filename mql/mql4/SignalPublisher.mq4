@@ -206,12 +206,22 @@ void OnTimer()
       else
         {
          seen[idx] = true;
-         bool changed = (g_volumes[idx] != OrderLots() ||
-                         g_stopLoss[idx] != OrderStopLoss() ||
-                         g_takeProfit[idx] != OrderTakeProfit());
-         if(changed)
+         // MT4 partial closes keep the SAME ticket with a reduced OrderLots()
+         // -- must be told apart from a plain SL/TP edit, since the target
+         // needs to shrink its position too, not just get a MODIFY.
+         bool volumeChanged = (g_volumes[idx] != OrderLots());
+         bool slTpChanged = (g_stopLoss[idx] != OrderStopLoss() ||
+                              g_takeProfit[idx] != OrderTakeProfit());
+         if(volumeChanged)
            {
             g_volumes[idx] = OrderLots();
+            g_stopLoss[idx] = OrderStopLoss();
+            g_takeProfit[idx] = OrderTakeProfit();
+            EmitEvent("PARTIAL_CLOSE", OrderTicket(), OrderSymbol(), OrderType(),
+                      OrderLots(), OrderOpenPrice(), OrderStopLoss(), OrderTakeProfit(), false);
+           }
+         else if(slTpChanged)
+           {
             g_stopLoss[idx] = OrderStopLoss();
             g_takeProfit[idx] = OrderTakeProfit();
             EmitEvent("MODIFY", OrderTicket(), OrderSymbol(), OrderType(),

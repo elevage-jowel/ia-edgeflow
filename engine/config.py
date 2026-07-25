@@ -27,6 +27,10 @@ class TargetAccountConfig:
     files_dir: Path
     risk_pct: float
     symbol_specs: dict[str, SymbolSpec]
+    # Hard safety ceiling in lots, independent of the risk-parity calculation
+    # -- catches a bad config or a data glitch from opening an oversized
+    # trade even if the % risk math says otherwise. None disables it.
+    max_absolute_volume: float | None = None
 
 
 @dataclass(frozen=True)
@@ -100,12 +104,14 @@ def load_config(path: str | Path) -> EngineConfig:
     targets = []
     for t in targets_raw:
         target_id = _require(t, "id", "targets[]")
+        max_abs_volume = t.get("max_absolute_volume")
         targets.append(
             TargetAccountConfig(
                 id=target_id,
                 files_dir=Path(_require(t, "files_dir", f"targets[{target_id}]")).expanduser(),
                 risk_pct=float(_require(t, "risk_pct", f"targets[{target_id}]")),
                 symbol_specs=_load_symbol_specs(_require(t, "symbol_specs", f"targets[{target_id}]"), target_id),
+                max_absolute_volume=float(max_abs_volume) if max_abs_volume is not None else None,
             )
         )
 

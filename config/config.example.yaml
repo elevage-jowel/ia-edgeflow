@@ -32,6 +32,10 @@ targets:
   - id: broker_b_target
     files_dir: /home/edgeflow/.wine/drive_c/Program Files/BrokerB MT5/MQL5/Files/edgeflow
     risk_pct: 1.0   # % of THIS account's equity to risk per copied trade
+    # Optional hard safety ceiling in lots, independent of the risk-parity
+    # calculation -- caps a trade even if a bad config or data glitch made
+    # the risk math compute something unreasonably large. Omit to disable.
+    max_absolute_volume: 5.0
     symbol_specs:
       EURUSD:
         contract_size: 100000

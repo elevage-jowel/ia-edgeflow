@@ -19,7 +19,7 @@ from .heartbeat import HeartbeatError, read_heartbeat
 from .kill_switch import KillSwitch
 from .models import CopyCommand, TradeSignal
 from .notifier import Notifier
-from .risk_engine import RiskEngineError, compute_target_volume
+from .risk_engine import RiskEngineError, compute_target_volume, round_to_step
 from .scoring import score_position
 from .smc_analysis import analyze_entry_context
 
@@ -38,10 +38,70 @@ def _rr_tier_reached(rr_ratio: float, thresholds: list[float]) -> float | None:
     return None
 
 
+def _handle_partial_close(signal: TradeSignal, target: TargetAccountConfig,
+                           outbox: CommandOutbox, conn) -> None:
+    volumes = db.get_position_volumes(
+        conn, source_account_id=signal.source_account_id,
+        source_ticket=signal.source_ticket, target_account_id=target.id,
+    )
+    if volumes is None:
+        db.log_copy(
+            conn, source_account_id=signal.source_account_id,
+            source_ticket=signal.source_ticket, target_account_id=target.id,
+            event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
+            source_volume=signal.volume, target_volume=None,
+            entry_price=signal.entry_price, stop_loss=signal.stop_loss,
+            take_profit=signal.take_profit, status="SKIPPED_NO_POSITION_RECORD",
+            detail="no open position on record for this ticket -- can't compute a proportional size",
+        )
+        return
+
+    source_volume_at_open, target_volume_at_open = volumes
+    # Always derive from the ORIGINAL opened volumes, never from a running
+    # total: correct after any number of partial closes without rounding
+    # compounding across them.
+    fraction_remaining = signal.volume / source_volume_at_open
+    desired_target_volume = target_volume_at_open * fraction_remaining
+
+    spec = target.symbol_specs.get(signal.symbol)
+    if spec is not None:
+        # Round DOWN (never up) so the target never ends up carrying more
+        # exposure than proportionally correct. If what's left rounds below
+        # the broker's minimum, treat it as "close the rest" (0) rather than
+        # forcing it back up to volume_min, which would undo the partial close.
+        desired_target_volume = round_to_step(desired_target_volume, spec)
+        if desired_target_volume < spec.volume_min:
+            desired_target_volume = 0.0
+
+    outbox.send(CopyCommand(
+        target_account_id=target.id,
+        source_ticket=signal.source_ticket,
+        event=signal.event,
+        symbol=signal.symbol,
+        side=signal.side,
+        volume=desired_target_volume,
+        stop_loss=signal.stop_loss,
+        take_profit=signal.take_profit,
+    ))
+    db.log_copy(
+        conn, source_account_id=signal.source_account_id,
+        source_ticket=signal.source_ticket, target_account_id=target.id,
+        event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
+        source_volume=signal.volume, target_volume=desired_target_volume,
+        entry_price=signal.entry_price, stop_loss=signal.stop_loss,
+        take_profit=signal.take_profit, status="PARTIAL_CLOSE_FORWARDED",
+    )
+
+
 def _process_target(signal: TradeSignal, target: TargetAccountConfig,
                      outbox: CommandOutbox, killed: bool, conn,
                      notifier: Notifier | None = None,
                      rr_alert_thresholds: list[float] | None = None) -> None:
+    if signal.event.value == "PARTIAL_CLOSE":
+        # Risk-reducing, same as a full CLOSE -- always allowed, even while killed.
+        _handle_partial_close(signal, target, outbox, conn)
+        return
+
     if signal.event.value == "CLOSE":
         # Closing exposure is always allowed, even while killed.
         outbox.send(CopyCommand(
@@ -152,6 +212,21 @@ def _process_target(signal: TradeSignal, target: TargetAccountConfig,
         )
         return
 
+    if target.max_absolute_volume is not None and volume > target.max_absolute_volume:
+        logger.warning(
+            "volume %.4f for %s on %s exceeds safety cap %.4f; clamping",
+            volume, signal.symbol, target.id, target.max_absolute_volume,
+        )
+        if notifier is not None:
+            notifier.notify(
+                "Sentinel : volume plafonné",
+                f"{signal.symbol} sur {target.id} : volume calculé {volume:.2f} lots dépasse le "
+                f"plafond de sécurité {target.max_absolute_volume:.2f} — ouverture plafonnée.",
+                kind=f"volume_capped_{target.id}",
+                min_interval_seconds=3600,
+            )
+        volume = target.max_absolute_volume
+
     outbox.send(CopyCommand(
         target_account_id=target.id,
         source_ticket=signal.source_ticket,
@@ -193,7 +268,7 @@ def _process_target(signal: TradeSignal, target: TargetAccountConfig,
         source_ticket=signal.source_ticket, target_account_id=target.id,
         symbol=signal.symbol, side=signal.side.value,
         entry_price=signal.entry_price, stop_loss=signal.stop_loss,
-        take_profit=signal.take_profit, target_volume=volume,
+        take_profit=signal.take_profit, source_volume=signal.volume, target_volume=volume,
         risk_pct_intended=target.risk_pct, rr_ratio=score.rr_ratio,
         risk_deviation_pct=score.risk_deviation_pct,
         quality_score=score.quality_score,

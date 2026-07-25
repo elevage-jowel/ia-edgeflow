@@ -45,6 +45,11 @@ CREATE TABLE IF NOT EXISTS positions (
     entry_price REAL NOT NULL,
     stop_loss REAL NOT NULL,
     take_profit REAL NOT NULL,
+    -- Volumes as opened, kept fixed for the position's whole lifetime even
+    -- across partial closes -- PARTIAL_CLOSE handling (engine/main.py)
+    -- always derives the target's proportional remaining size from these
+    -- originals, never from a running total, so rounding never compounds.
+    source_volume REAL NOT NULL,
     target_volume REAL NOT NULL,
     risk_pct_intended REAL NOT NULL,
     rr_ratio REAL,
@@ -139,6 +144,7 @@ def open_position(
     entry_price: float,
     stop_loss: float,
     take_profit: float,
+    source_volume: float,
     target_volume: float,
     risk_pct_intended: float,
     rr_ratio: float | None,
@@ -159,15 +165,15 @@ def open_position(
         """
         INSERT OR IGNORE INTO positions (
             source_account_id, source_ticket, target_account_id, symbol, side,
-            entry_price, stop_loss, take_profit, target_volume,
+            entry_price, stop_loss, take_profit, source_volume, target_volume,
             risk_pct_intended, rr_ratio, risk_deviation_pct, quality_score,
             has_fvg, has_liquidity_grab, has_bos, has_order_block, context_json,
             status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
         """,
         (
             source_account_id, source_ticket, target_account_id, symbol, side,
-            entry_price, stop_loss, take_profit, target_volume,
+            entry_price, stop_loss, take_profit, source_volume, target_volume,
             risk_pct_intended, rr_ratio, risk_deviation_pct, quality_score,
             int(has_fvg), int(has_liquidity_grab), int(has_bos), int(has_order_block),
             context_json,
@@ -175,6 +181,28 @@ def open_position(
     )
     conn.commit()
     return cursor.rowcount > 0
+
+
+def get_position_volumes(
+    conn: sqlite3.Connection,
+    *,
+    source_account_id: str,
+    source_ticket: int,
+    target_account_id: str,
+) -> tuple[float, float] | None:
+    """Returns (source_volume, target_volume) as originally opened, for an
+    OPEN position -- the basis PARTIAL_CLOSE handling uses to compute the
+    target's proportional remaining size. None if there's no open position
+    on record (e.g. it predates this engine, or the OPEN signal was missed)."""
+    row = conn.execute(
+        """
+        SELECT source_volume, target_volume FROM positions
+        WHERE source_account_id = ? AND source_ticket = ? AND target_account_id = ?
+          AND status = 'OPEN'
+        """,
+        (source_account_id, source_ticket, target_account_id),
+    ).fetchone()
+    return (row[0], row[1]) if row else None
 
 
 def close_position(

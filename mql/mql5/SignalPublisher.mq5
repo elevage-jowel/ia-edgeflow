@@ -70,14 +70,17 @@ void EmitEvent(string eventName, ulong ticket, string symbol, ENUM_POSITION_TYPE
       PrintFormat("edgeflow: failed to finalize %s err=%d", name, GetLastError());
   }
 
-// CLOSE needs the actual close price and realized profit -- without this,
-// nothing downstream can ever learn which trades (and entry patterns)
-// were actually good ones.
-void EmitCloseEvent(ulong ticket, string symbol, ENUM_POSITION_TYPE type, double volume,
-                     double openPrice, double closePrice, double profit, double sl, double tp)
+// CLOSE/PARTIAL_CLOSE need the actual close price and realized profit --
+// without this, nothing downstream can ever learn which trades (and entry
+// patterns) were actually good ones. `volume` means different things per
+// eventName: the closed amount for CLOSE, the amount STILL REMAINING for
+// PARTIAL_CLOSE (see models.py's TradeSignal docstring on the Python side).
+void EmitCloseEvent(string eventName, ulong ticket, string symbol, ENUM_POSITION_TYPE type,
+                     double volume, double openPrice, double closePrice, double profit,
+                     double sl, double tp)
   {
    string dir = "edgeflow\\out\\";
-   string name = IntegerToString((long)ticket) + "_CLOSE_" + IntegerToString(MathRand()) + ".json";
+   string name = IntegerToString((long)ticket) + "_" + eventName + "_" + IntegerToString(MathRand()) + ".json";
    string tmpName = "." + name + ".tmp";
 
    int handle = FileOpen(dir + tmpName, FILE_WRITE | FILE_TXT | FILE_ANSI);
@@ -90,7 +93,7 @@ void EmitCloseEvent(ulong ticket, string symbol, ENUM_POSITION_TYPE type, double
    int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
    FileWrite(handle, "{");
    FileWrite(handle, "  \"ticket\": ", (long)ticket, ",");
-   FileWrite(handle, "  \"event\": \"CLOSE\",");
+   FileWrite(handle, "  \"event\": \"", eventName, "\",");
    FileWrite(handle, "  \"symbol\": \"", symbol, "\",");
    FileWrite(handle, "  \"side\": \"", SideOf(type), "\",");
    FileWrite(handle, "  \"volume\": ", DoubleToString(volume, 2), ",");
@@ -171,7 +174,20 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
       double profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT) +
                        HistoryDealGetDouble(trans.deal, DEAL_SWAP) +
                        HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
-      EmitCloseEvent(positionId, symbol, type, dealVolume, openPrice, dealPrice, profit, 0, 0);
+
+      // If the position still exists after this OUT deal, only part of it
+      // was closed -- report the volume STILL REMAINING, not what closed.
+      if(PositionSelectByTicket(positionId))
+        {
+         double remainingVolume = PositionGetDouble(POSITION_VOLUME);
+         EmitCloseEvent("PARTIAL_CLOSE", positionId, symbol, type, remainingVolume,
+                        openPrice, dealPrice, profit,
+                        PositionGetDouble(POSITION_SL), PositionGetDouble(POSITION_TP));
+        }
+      else
+        {
+         EmitCloseEvent("CLOSE", positionId, symbol, type, dealVolume, openPrice, dealPrice, profit, 0, 0);
+        }
      }
   }
 //+------------------------------------------------------------------+

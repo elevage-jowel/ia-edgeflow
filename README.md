@@ -65,6 +65,8 @@ Pour le déploiement complet sur Hostinger (choix du plan VPS, installation Meta
 - SQLite tourne en mode WAL pour que le dashboard puisse lire pendant que le moteur écrit, sans erreur "database is locked".
 - Le service s'arrête proprement sur `SIGTERM`/`SIGINT` (utile pour `systemctl stop`), et les logs sont structurés (niveau, horodatage) au lieu de simples `print`.
 - Un redémarrage de terminal MetaTrader (reboot VPS, mise à jour) ne duplique pas les positions déjà ouvertes ni ne les rend orphelines — les EA reconstruisent leur état depuis les positions/ordres existants au démarrage (voir `mql/README.md`).
+- Les **clôtures partielles** sont détectées et répercutées proportionnellement sur la cible (voir `mql/README.md`).
+- Un **plafond de volume absolu** optionnel par compte cible (`max_absolute_volume`) protège contre un calcul de risque qui déraperait (mauvaise config, donnée aberrante) — le trade est ouvert mais plafonné, jamais bloqué silencieusement.
 
 ## Alertes et sauvegarde
 

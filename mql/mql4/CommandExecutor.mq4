@@ -162,6 +162,23 @@ void HandleCommandFile(string filename)
             Print("edgeflow: OrderClose failed for ", localTicket, " err=", GetLastError());
         }
      }
+   else if(event == "PARTIAL_CLOSE")
+     {
+      // "volume" here is the DESIRED REMAINING size (see models.py's
+      // CopyCommand docstring) -- close just enough to reach it.
+      int localTicket = FindLocalTicket(sourceTicket);
+      if(localTicket > 0 && OrderSelect(localTicket, SELECT_BY_TICKET))
+        {
+         double toClose = OrderLots() - volume;
+         if(toClose > 0)
+           {
+            double price = (OrderType() == OP_BUY) ? MarketInfo(OrderSymbol(), MODE_BID)
+                                                     : MarketInfo(OrderSymbol(), MODE_ASK);
+            if(!OrderClose(localTicket, NormalizeDouble(toClose, 2), price, Slippage, clrNONE))
+               Print("edgeflow: partial OrderClose failed for ", localTicket, " err=", GetLastError());
+           }
+        }
+     }
 
    string doneDir = "edgeflow\\in\\done\\";
    if(!FileMove(dir + filename, 0, doneDir + filename, FILE_REWRITE))

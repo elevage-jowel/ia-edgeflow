@@ -157,6 +157,19 @@ void HandleCommandFile(string filename)
          if(!trade.PositionClose(localTicket))
             PrintFormat("edgeflow: close failed for %I64u err=%d", localTicket, GetLastError());
      }
+   else if(event == "PARTIAL_CLOSE")
+     {
+      // "volume" here is the DESIRED REMAINING size (see models.py's
+      // CopyCommand docstring) -- close just enough to reach it.
+      ulong localTicket = FindLocalTicket(sourceTicket);
+      if(localTicket != 0 && PositionSelectByTicket(localTicket))
+        {
+         double toClose = PositionGetDouble(POSITION_VOLUME) - volume;
+         if(toClose > 0)
+            if(!trade.PositionClosePartial(localTicket, toClose))
+               PrintFormat("edgeflow: partial close failed for %I64u err=%d", localTicket, GetLastError());
+        }
+     }
 
    string doneDir = "edgeflow\\in\\done\\";
    if(!FileMove(dir + filename, 0, doneDir + filename, FILE_REWRITE))

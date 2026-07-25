@@ -248,7 +248,7 @@ def _open_position_kwargs(**overrides):
     kwargs = dict(
         source_account_id="src", source_ticket=1, target_account_id="tgt",
         symbol="EURUSD", side="BUY", entry_price=1.10, stop_loss=1.09,
-        take_profit=1.12, target_volume=0.1, risk_pct_intended=1.0,
+        take_profit=1.12, source_volume=1.0, target_volume=0.1, risk_pct_intended=1.0,
         rr_ratio=2.0, risk_deviation_pct=0.0, quality_score=90.0,
     )
     kwargs.update(overrides)

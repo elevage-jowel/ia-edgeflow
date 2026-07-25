@@ -29,10 +29,13 @@ C'est **ce chemin absolu** qu'il faut renseigner dans `config/config.yaml` (`sou
 
 `SignalPublisher` et `CommandExecutor` reconstruisent leur état en mémoire dans `OnInit()` à partir des positions déjà ouvertes (et, côté `CommandExecutor`, du commentaire `edgeflow:<ticket_source>` attaché à chaque ordre) — un redémarrage du terminal (reboot VPS, mise à jour, rechargement de l'EA) ne doit ni dupliquer une position déjà ouverte sur la source, ni rendre une position orpheline côté cible (plus jamais modifiée/fermée). C'est indispensable : sans ça, un simple reboot pouvait doubler l'exposition ou laisser une position ouverte indéfiniment sur le compte cible même après sa fermeture sur la source.
 
+## Clôtures partielles
+
+Une clôture partielle sur la source (fermer une partie du lot) est détectée et répercutée proportionnellement sur la cible : si la source ferme 30% de sa position, la cible ferme aussi environ 30% de la sienne (arrondi vers le bas, jamais vers le haut, pour ne jamais laisser la cible plus exposée que proportionnellement correct). Le calcul se base toujours sur les volumes d'origine à l'ouverture, pas sur un total cumulé — donc pas de dérive d'arrondi même après plusieurs clôtures partielles successives sur le même trade.
+
 ## Limites connues de ce MVP
 
 - MT4 n'a pas d'événement `OnTradeTransaction` : `SignalPublisher.mq4` détecte les changements en comparant l'état des ordres toutes les `PollMillis` (500 ms par défaut). Une position ouverte et refermée entre deux scans serait manquée — réduire `PollMillis` si besoin.
-- Un seul symbole par ticket copié : les ordres partiellement fermés (fermeture partielle d'une position) ne sont pas gérés dans ce MVP.
 - Le parseur JSON côté MQL est volontairement minimal (StringFind), adapté au schéma fixe émis par le moteur Python — ce n'est pas un parseur JSON général.
 - Les ordres en attente (pending orders) ne sont pas copiés, seulement les positions ouvertes.
 - **Pas de retour d'échec d'exécution vers Python** : si `OrderSend`/`trade.Buy` échoue côté cible (refus du broker, requote, fonds insuffisants...), l'erreur part dans le journal Experts du terminal (`Print`/`PrintFormat`) mais le fichier de commande est quand même archivé dans `in/done/`, et `positions`/`copy_log` côté Python affichent toujours `COPIED` puisque l'écriture du fichier a réussi — l'échec réel d'exécution est invisible dans le dashboard. À surveiller manuellement (journal Experts du terminal cible) tant qu'un canal de retour (fichier d'accusé de réception lu par le moteur Python) n'est pas construit.
