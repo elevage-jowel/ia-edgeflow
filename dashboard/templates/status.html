@@ -4,13 +4,22 @@
 <meta charset="utf-8">
 <title>Sentinel — Statut</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
   .badge { padding: .25rem .6rem; border-radius: .4rem; color: #fff; font-weight: 600; }
   .ok { background: #1a7f37; }
   .killed { background: #b91c1c; }
   button { padding: .5rem 1rem; margin-right: .5rem; cursor: pointer; }
   table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: .85rem; }
   td, th { border-bottom: 1px solid #ddd; padding: .35rem .5rem; text-align: left; }
+
+  .tabs { display: flex; gap: .25rem; margin-top: 1.5rem; border-bottom: 2px solid #ddd; }
+  .tab-btn {
+    padding: .6rem 1.1rem; margin: 0; border: none; border-radius: .4rem .4rem 0 0;
+    background: #eee; color: #333; font-weight: 600; cursor: pointer;
+  }
+  .tab-btn.active { background: #1a1a2e; color: #fff; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
 </style>
 </head>
 <body>
@@ -18,23 +27,42 @@
   <p>État : <span id="badge" class="badge">...</span> <span id="reason"></span></p>
   <button onclick="post('/api/kill')">Arrêt d'urgence</button>
   <button onclick="post('/api/resume')">Reprendre</button>
-  <h2>Positions enregistrées</h2>
-  <table id="positions"><thead>
-    <tr><th>Ouverte</th><th>Symbole</th><th>Sens</th><th>Volume</th><th>R:R</th><th>Écart risque</th><th>Score</th><th>Contexte SMC</th><th>Résultat (source)</th><th>Statut</th></tr>
-  </thead><tbody></tbody></table>
 
-  <h2>Setups détectés sur le marché (alertes)</h2>
-  <p id="performance" style="font-size:.85rem;color:#666;"></p>
-  <table id="market-patterns"><thead>
-    <tr><th>Détecté</th><th>Symbole</th><th>Sens</th><th>Entrée</th><th>SL</th><th>TP</th><th>R:R</th><th>Statut</th></tr>
-  </thead><tbody></tbody></table>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="positions">Positions</button>
+    <button class="tab-btn" data-tab="market">Setups marché</button>
+    <button class="tab-btn" data-tab="events">Événements</button>
+  </div>
 
-  <h2>Derniers événements</h2>
-  <table id="events"><thead>
-    <tr><th>Heure</th><th>Source</th><th>Cible</th><th>Symbole</th><th>Statut</th></tr>
-  </thead><tbody></tbody></table>
+  <div id="tab-positions" class="tab-panel active">
+    <table id="positions"><thead>
+      <tr><th>Ouverte</th><th>Symbole</th><th>Sens</th><th>Volume</th><th>R:R</th><th>Écart risque</th><th>Score</th><th>Contexte SMC</th><th>Résultat (source)</th><th>Statut</th></tr>
+    </thead><tbody></tbody></table>
+  </div>
+
+  <div id="tab-market" class="tab-panel">
+    <p id="performance" style="font-size:.85rem;color:#666;"></p>
+    <table id="market-patterns"><thead>
+      <tr><th>Détecté</th><th>Symbole</th><th>Sens</th><th>Entrée</th><th>SL</th><th>TP</th><th>R:R</th><th>Statut</th></tr>
+    </thead><tbody></tbody></table>
+  </div>
+
+  <div id="tab-events" class="tab-panel">
+    <table id="events"><thead>
+      <tr><th>Heure</th><th>Source</th><th>Cible</th><th>Symbole</th><th>Statut</th></tr>
+    </thead><tbody></tbody></table>
+  </div>
 
 <script>
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
 async function refresh() {
   const r = await fetch('/api/status');
   const data = await r.json();
