@@ -38,7 +38,9 @@ Chaque position copiée avec succès est enregistrée dans la table `positions` 
 
 ## Scan du marché en direct (alertes)
 
-`engine/market_scanner.py` surveille en continu une liste de symboles (indépendamment de tout trade copié) pour repérer un **order block juste après une cassure de structure**, et envoie une alerte Telegram/email avec une **entrée/SL/TP suggérés** dès qu'un nouveau setup apparaît. Chaque détection est enregistrée dans `market_patterns` (dédupliquée — pas de répétition sur un setup déjà vu), que tu agisses dessus ou non. **Alertes uniquement : Sentinel n'ouvre jamais de position tout seul.** Voir `mql/README.md` (§ Scan du marché) et `patterns/README.md` pour l'activer et pour la suite (mesurer la fiabilité réelle des setups une fois qu'il y en a assez).
+`engine/market_scanner.py` surveille en continu une liste de symboles (indépendamment de tout trade copié) pour repérer un **order block juste après une cassure de structure**, et envoie une alerte Telegram/email avec une **entrée/SL/TP suggérés** dès qu'un nouveau setup apparaît. Chaque détection est enregistrée dans `market_patterns` (dédupliquée — pas de répétition sur un setup déjà vu), que tu agisses dessus ou non. **Alertes uniquement : Sentinel n'ouvre jamais de position tout seul.**
+
+Chaque setup est ensuite suivi jusqu'à sa résolution (entrée touchée puis TP ou SL atteint), et le dashboard affiche un taux de réussite par symbole/direction dès qu'il y a assez de setups résolus. Voir `mql/README.md` (§ Scan du marché) et `patterns/README.md` pour l'activer, l'ordre de grandeur de données nécessaire avant de faire confiance aux chiffres, et la suite.
 
 ## Structure du repo
 

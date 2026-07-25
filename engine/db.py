@@ -83,10 +83,12 @@ CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 -- Every SMC setup the live market scanner (engine/market_scanner.py)
 -- detects, whether or not the user acts on it -- independent of copied
 -- trades entirely. This is the dataset "how good is this pattern really"
--- gets answered from, once enough of them have played out. No outcome
--- columns yet (hit_tp/hit_sl): that needs the scanner to keep re-checking
--- a setup against later candles, a natural next step once this base is
--- validated.
+-- gets answered from, once enough of them have resolved.
+--
+-- status: PENDING (price hasn't reached the entry zone yet) -> ACTIVE
+-- (entry touched, watching for TP/SL) -> HIT_TP / HIT_SL. EXPIRED means
+-- the rolling candle window moved past what we'd last checked before it
+-- resolved -- an honest "we lost track", not counted as a win or a loss.
 CREATE TABLE IF NOT EXISTS market_patterns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     detected_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -98,10 +100,14 @@ CREATE TABLE IF NOT EXISTS market_patterns (
     stop_loss REAL NOT NULL,
     take_profit REAL NOT NULL,
     rr_ratio REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    last_checked_time TEXT NOT NULL,
+    resolved_at TEXT,
     UNIQUE(symbol, pattern_type, order_block_time)
 );
 
 CREATE INDEX IF NOT EXISTS idx_market_patterns_symbol ON market_patterns(symbol);
+CREATE INDEX IF NOT EXISTS idx_market_patterns_status ON market_patterns(status);
 """
 
 
@@ -276,11 +282,11 @@ def insert_market_pattern(
         """
         INSERT OR IGNORE INTO market_patterns (
             symbol, pattern_type, direction, order_block_time,
-            entry_price, stop_loss, take_profit, rr_ratio
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            entry_price, stop_loss, take_profit, rr_ratio, last_checked_time
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (symbol, pattern_type, direction, order_block_time,
-         entry_price, stop_loss, take_profit, rr_ratio),
+         entry_price, stop_loss, take_profit, rr_ratio, order_block_time),
     )
     conn.commit()
     return cursor.rowcount > 0
@@ -290,4 +296,53 @@ def list_market_patterns(conn: sqlite3.Connection, limit: int = 50) -> list[sqli
     conn.row_factory = sqlite3.Row
     return conn.execute(
         "SELECT * FROM market_patterns ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
+
+
+def list_unresolved_patterns(conn: sqlite3.Connection, symbol: str) -> list[sqlite3.Row]:
+    conn.row_factory = sqlite3.Row
+    return conn.execute(
+        """
+        SELECT * FROM market_patterns
+        WHERE symbol = ? AND status IN ('PENDING', 'ACTIVE')
+        """,
+        (symbol,),
+    ).fetchall()
+
+
+def update_pattern_status(
+    conn: sqlite3.Connection,
+    pattern_id: int,
+    *,
+    status: str,
+    last_checked_time: str,
+    resolved: bool = False,
+) -> None:
+    conn.execute(
+        """
+        UPDATE market_patterns
+        SET status = ?, last_checked_time = ?,
+            resolved_at = CASE WHEN ? THEN datetime('now') ELSE resolved_at END
+        WHERE id = ?
+        """,
+        (status, last_checked_time, resolved, pattern_id),
+    )
+    conn.commit()
+
+
+def pattern_performance(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Win rate per (symbol, direction) among RESOLVED setups (HIT_TP/HIT_SL
+    only -- PENDING/ACTIVE/EXPIRED don't count toward it either way)."""
+    conn.row_factory = sqlite3.Row
+    return conn.execute(
+        """
+        SELECT symbol, direction,
+               COUNT(*) AS resolved_count,
+               SUM(CASE WHEN status = 'HIT_TP' THEN 1 ELSE 0 END) AS wins,
+               ROUND(100.0 * SUM(CASE WHEN status = 'HIT_TP' THEN 1 ELSE 0 END) / COUNT(*), 1) AS win_rate_pct
+        FROM market_patterns
+        WHERE status IN ('HIT_TP', 'HIT_SL')
+        GROUP BY symbol, direction
+        ORDER BY symbol, direction
+        """
     ).fetchall()

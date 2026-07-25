@@ -23,6 +23,12 @@
     <tr><th>Ouverte</th><th>Symbole</th><th>Sens</th><th>Volume</th><th>R:R</th><th>Écart risque</th><th>Score</th><th>Contexte SMC</th><th>Résultat (source)</th><th>Statut</th></tr>
   </thead><tbody></tbody></table>
 
+  <h2>Setups détectés sur le marché (alertes)</h2>
+  <p id="performance" style="font-size:.85rem;color:#666;"></p>
+  <table id="market-patterns"><thead>
+    <tr><th>Détecté</th><th>Symbole</th><th>Sens</th><th>Entrée</th><th>SL</th><th>TP</th><th>R:R</th><th>Statut</th></tr>
+  </thead><tbody></tbody></table>
+
   <h2>Derniers événements</h2>
   <table id="events"><thead>
     <tr><th>Heure</th><th>Source</th><th>Cible</th><th>Symbole</th><th>Statut</th></tr>
@@ -68,6 +74,31 @@ async function refresh() {
       `<td>${p.target_volume}</td><td>${rr}</td><td>${p.risk_deviation_pct}%</td>` +
       `<td>${p.quality_score}</td><td>${tags}</td><td>${result}</td><td>${p.status}</td>`;
     ptbody.appendChild(tr);
+  }
+
+  const mr = await fetch('/api/market_patterns');
+  const mdata = await mr.json();
+  const statusColors = {
+    HIT_TP: 'color:#1a7f37', HIT_SL: 'color:#b91c1c',
+    ACTIVE: 'color:#9a6a00', PENDING: 'color:#666', EXPIRED: 'color:#999',
+  };
+  const mtbody = document.querySelector('#market-patterns tbody');
+  mtbody.innerHTML = '';
+  for (const p of mdata.patterns) {
+    const tr = document.createElement('tr');
+    const style = statusColors[p.status] || '';
+    tr.innerHTML = `<td>${p.detected_at}</td><td>${p.symbol}</td><td>${p.direction}</td>` +
+      `<td>${p.entry_price}</td><td>${p.stop_loss}</td><td>${p.take_profit}</td>` +
+      `<td>${p.rr_ratio}</td><td style="${style}">${p.status}</td>`;
+    mtbody.appendChild(tr);
+  }
+  const perfEl = document.getElementById('performance');
+  if (mdata.performance.length === 0) {
+    perfEl.textContent = 'Pas encore assez de setups résolus pour un taux de réussite.';
+  } else {
+    perfEl.textContent = mdata.performance
+      .map(p => `${p.symbol} ${p.direction} : ${p.win_rate_pct}% (${p.wins}/${p.resolved_count})`)
+      .join(' · ');
   }
 }
 async function post(path) {

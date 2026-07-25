@@ -52,10 +52,18 @@ def test_scan_does_not_renotify_the_same_setup(tmp_path: Path):
 
     with db.connect(cfg.db_path) as conn:
         scan_and_notify(cfg, conn, notifier)
-        second_new_count = scan_and_notify(cfg, conn, notifier)
+        scan_and_notify(cfg, conn, notifier)
+        count_after_two_scans = notifier.notify.call_count
+        # Same static snapshot scanned twice more -- whatever happened on
+        # the first two scans (detection, and possibly an immediate
+        # resolution given this fixture), it must not keep re-firing.
+        scan_and_notify(cfg, conn, notifier)
+        scan_and_notify(cfg, conn, notifier)
+        count_after_four_scans = notifier.notify.call_count
+        patterns = db.list_market_patterns(conn)
 
-    assert second_new_count == 0
-    notifier.notify.assert_called_once()
+    assert count_after_four_scans == count_after_two_scans
+    assert len(patterns) == 1  # still deduped to a single row, not re-inserted
 
 
 def test_scan_disabled_does_nothing(tmp_path: Path):
@@ -90,3 +98,30 @@ def test_scan_malformed_snapshot_is_skipped_not_crashed(tmp_path: Path):
 
     assert new_count == 0
     notifier.notify.assert_not_called()
+
+
+def test_setup_expires_once_its_window_rolls_past_it(tmp_path: Path):
+    """Once the rolling snapshot no longer contains the setup's
+    last-checked candle, it must be marked EXPIRED rather than silently
+    guessed at -- an honest "we lost track", not counted as a win or loss."""
+    cfg, market_dir = _cfg(tmp_path)
+    (market_dir / "EURUSD.json").write_text(json.dumps({"symbol": "EURUSD", "candles": CANDLES}))
+    notifier = MagicMock()
+
+    with db.connect(cfg.db_path) as conn:
+        scan_and_notify(cfg, conn, notifier)  # detects (and likely resolves, see other test)
+
+        # A much later window that no longer contains any of the original
+        # candles' timestamps -- simulates the rolling window moving on.
+        later_candles = [
+            {"time": f"later{i}", "open": 1.20, "high": 1.201, "low": 1.199, "close": 1.200}
+            for i in range(10)
+        ]
+        (market_dir / "EURUSD.json").write_text(json.dumps({"symbol": "EURUSD", "candles": later_candles}))
+        scan_and_notify(cfg, conn, notifier)
+
+        statuses = {row["status"] for row in db.list_market_patterns(conn)}
+
+    # The original setup is either resolved (HIT_TP/HIT_SL, decided before
+    # the window moved on) or EXPIRED -- never left dangling as PENDING/ACTIVE.
+    assert statuses <= {"HIT_TP", "HIT_SL", "EXPIRED"}

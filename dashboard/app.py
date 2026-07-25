@@ -62,6 +62,20 @@ def positions():
         return {"positions": [dict(r) for r in rows]}
 
 
+@app.get("/api/market_patterns")
+def market_patterns():
+    cfg = _cfg()
+    if not cfg.db_path.exists():
+        return {"patterns": [], "performance": []}
+    with db.connect(cfg.db_path) as conn:
+        patterns = db.list_market_patterns(conn, limit=100)
+        performance = db.pattern_performance(conn)
+        return {
+            "patterns": [dict(r) for r in patterns],
+            "performance": [dict(r) for r in performance],
+        }
+
+
 @app.post("/api/kill")
 def kill():
     cfg = _cfg()

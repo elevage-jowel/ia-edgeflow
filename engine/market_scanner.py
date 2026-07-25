@@ -79,6 +79,92 @@ def setup_side(setup: MarketSetup) -> Side:
     return Side.BUY if setup.direction == Direction.BULLISH else Side.SELL
 
 
+PENDING = "PENDING"   # price hasn't reached the entry zone yet
+ACTIVE = "ACTIVE"     # entry touched, watching for TP/SL
+HIT_TP = "HIT_TP"
+HIT_SL = "HIT_SL"
+
+
+def _resolve_status(direction: Direction, entry: float, stop_loss: float, take_profit: float,
+                     status: str, candles_after: list[Candle]) -> str:
+    """Walks candles_after chronologically, simulating the setup as a
+    limit-style entry: PENDING until price trades into the entry zone,
+    then ACTIVE until SL or TP is hit. If a single candle's range covers
+    both SL and TP (only possible with OHLC, no intrabar order), SL wins
+    -- the conservative assumption, standard in simplified backtesting.
+    """
+    for c in candles_after:
+        if status == PENDING:
+            triggered = (c.low <= entry) if direction == Direction.BULLISH else (c.high >= entry)
+            if not triggered:
+                continue
+            status = ACTIVE
+
+        if direction == Direction.BULLISH:
+            hit_sl = c.low <= stop_loss
+            hit_tp = c.high >= take_profit
+        else:
+            hit_sl = c.high >= stop_loss
+            hit_tp = c.low <= take_profit
+
+        if hit_sl:
+            return HIT_SL
+        if hit_tp:
+            return HIT_TP
+
+    return status
+
+
+def _find_index_by_time(candles: list[Candle], time: str) -> int | None:
+    for i, c in enumerate(candles):
+        if c.time == time:
+            return i
+    return None
+
+
+def resolve_patterns_for_symbol(conn, symbol: str, candles: list[Candle],
+                                 notifier: Notifier | None) -> None:
+    """Re-checks every still-open (PENDING/ACTIVE) setup for `symbol`
+    against the candles that have arrived since it was last checked, and
+    updates its status. A setup whose last-checked point has fallen out of
+    the (rolling, ScanCandleCount-wide) snapshot window before resolving
+    is marked EXPIRED rather than guessed at -- see db.py's schema comment.
+    """
+    for row in db.list_unresolved_patterns(conn, symbol):
+        idx = _find_index_by_time(candles, row["last_checked_time"])
+        if idx is None:
+            db.update_pattern_status(
+                conn, row["id"], status="EXPIRED",
+                last_checked_time=row["last_checked_time"],
+            )
+            continue
+
+        candles_after = candles[idx + 1:]
+        if not candles_after:
+            continue  # nothing new since the last check
+
+        new_status = _resolve_status(
+            Direction(row["direction"]), row["entry_price"], row["stop_loss"],
+            row["take_profit"], row["status"], candles_after,
+        )
+        resolved = new_status in (HIT_TP, HIT_SL)
+        db.update_pattern_status(
+            conn, row["id"], status=new_status,
+            last_checked_time=candles_after[-1].time, resolved=resolved,
+        )
+
+        if resolved:
+            logger.info("market setup resolved: %s #%s -> %s", symbol, row["id"], new_status)
+            if notifier is not None:
+                outcome = "TP atteint" if new_status == HIT_TP else "SL touché"
+                notifier.notify(
+                    f"Sentinel : setup {symbol} résolu ({outcome})",
+                    f"{symbol} {row['direction']} détecté le {row['order_block_time']} : {outcome}.\n"
+                    f"Entrée {row['entry_price']} | SL {row['stop_loss']} | TP {row['take_profit']}",
+                    kind=f"market_resolution_{symbol}",
+                )
+
+
 def read_market_candles(path: Path) -> list[Candle]:
     raw = json.loads(path.read_text())
     return [
@@ -113,6 +199,8 @@ def scan_and_notify(cfg: EngineConfig, conn, notifier: Notifier | None) -> int:
 
         if len(candles) < 5:
             continue
+
+        resolve_patterns_for_symbol(conn, symbol, candles, notifier)
 
         for setup in find_setups(symbol, candles, cfg.market_scan.rr_ratio):
             inserted = db.insert_market_pattern(
