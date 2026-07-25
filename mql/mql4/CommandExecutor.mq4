@@ -16,18 +16,6 @@ input int    MagicNumber = 424242;
 int g_sourceTickets[];
 int g_localTickets[];
 
-int OnInit()
-  {
-   EventSetMillisecondTimer(PollMillis);
-   ArrayResize(g_sourceTickets, 0);
-   return(INIT_SUCCEEDED);
-  }
-
-void OnDeinit(const int reason)
-  {
-   EventKillTimer();
-  }
-
 int FindLocalTicket(int sourceTicket)
   {
    for(int i = 0; i < ArraySize(g_sourceTickets); i++)
@@ -43,6 +31,46 @@ void RememberMapping(int sourceTicket, int localTicket)
    ArrayResize(g_localTickets, n + 1);
    g_sourceTickets[n] = sourceTicket;
    g_localTickets[n] = localTicket;
+  }
+
+// Orders opened by HandleCommandFile() below carry "edgeflow:<sourceTicket>"
+// as their comment -- this recovers that source ticket from it.
+int ParseSourceTicketFromComment(string comment)
+  {
+   string prefix = "edgeflow:";
+   if(StringFind(comment, prefix) != 0)
+      return -1;
+   return (int)StringToInteger(StringSubstr(comment, StringLen(prefix)));
+  }
+
+int OnInit()
+  {
+   EventSetMillisecondTimer(PollMillis);
+   ArrayResize(g_sourceTickets, 0);
+   ArrayResize(g_localTickets, 0);
+
+   // Recover the source-ticket -> local-ticket mapping after a restart
+   // (VPS reboot, terminal update, EA reload). Without this, a position
+   // already open here becomes orphaned: no MODIFY or CLOSE from the
+   // source could ever be matched to it again, leaving it open forever
+   // even after the source closes.
+   for(int i = 0; i < OrdersTotal(); i++)
+     {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+         continue;
+      if(OrderMagicNumber() != MagicNumber)
+         continue;
+      int sourceTicket = ParseSourceTicketFromComment(OrderComment());
+      if(sourceTicket > 0)
+         RememberMapping(sourceTicket, OrderTicket());
+     }
+
+   return(INIT_SUCCEEDED);
+  }
+
+void OnDeinit(const int reason)
+  {
+   EventKillTimer();
   }
 
 // Extremely small JSON reader for our own fixed schema -- not a general

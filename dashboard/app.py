@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse
 
 from engine import db
 from engine.config import load_config
+from engine.kill_switch import KillSwitch
 
 CONFIG_PATH = os.environ.get("EDGEFLOW_CONFIG", "config/config.yaml")
 
@@ -29,7 +30,8 @@ def _cfg():
 @app.get("/api/status")
 def status():
     cfg = _cfg()
-    killed = cfg.kill_switch_file.exists()
+    kill_switch = KillSwitch(cfg.kill_switch_file, cfg.max_daily_drawdown_pct)
+    reason = kill_switch.reason()
 
     recent = []
     if cfg.db_path.exists():
@@ -42,7 +44,8 @@ def status():
         conn.close()
 
     return {
-        "kill_switch_active": killed,
+        "kill_switch_active": reason is not None,
+        "kill_switch_reason": reason,
         "source_account": cfg.source.id,
         "targets": [t.id for t in cfg.targets],
         "recent_events": recent,
@@ -63,7 +66,7 @@ def positions():
 def kill():
     cfg = _cfg()
     cfg.kill_switch_file.parent.mkdir(parents=True, exist_ok=True)
-    cfg.kill_switch_file.touch()
+    cfg.kill_switch_file.write_text("MANUAL")
     return {"kill_switch_active": True}
 
 

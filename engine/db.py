@@ -141,10 +141,15 @@ def open_position(
     has_bos: bool = False,
     has_order_block: bool = False,
     context_json: str | None = None,
-) -> None:
-    conn.execute(
+) -> bool:
+    """Returns False if a position already exists for this
+    (source_account_id, source_ticket, target_account_id) -- a duplicate
+    OPEN signal (e.g. a re-processed file) is ignored rather than
+    overwriting an existing record, which would reset opened_at and could
+    silently reopen an already-CLOSED position back to OPEN."""
+    cursor = conn.execute(
         """
-        INSERT OR REPLACE INTO positions (
+        INSERT OR IGNORE INTO positions (
             source_account_id, source_ticket, target_account_id, symbol, side,
             entry_price, stop_loss, take_profit, target_volume,
             risk_pct_intended, rr_ratio, risk_deviation_pct, quality_score,
@@ -161,6 +166,7 @@ def open_position(
         ),
     )
     conn.commit()
+    return cursor.rowcount > 0
 
 
 def close_position(

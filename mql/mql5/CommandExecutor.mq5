@@ -17,19 +17,6 @@ CTrade trade;
 ulong g_sourceTickets[];
 ulong g_localTickets[];
 
-int OnInit()
-  {
-   trade.SetExpertMagicNumber(MagicNumber);
-   EventSetMillisecondTimer(PollMillis);
-   ArrayResize(g_sourceTickets, 0);
-   return(INIT_SUCCEEDED);
-  }
-
-void OnDeinit(const int reason)
-  {
-   EventKillTimer();
-  }
-
 ulong FindLocalTicket(ulong sourceTicket)
   {
    for(int i = 0; i < ArraySize(g_sourceTickets); i++)
@@ -45,6 +32,48 @@ void RememberMapping(ulong sourceTicket, ulong localTicket)
    ArrayResize(g_localTickets, n + 1);
    g_sourceTickets[n] = sourceTicket;
    g_localTickets[n] = localTicket;
+  }
+
+// Positions opened by HandleCommandFile() below carry "edgeflow:<sourceTicket>"
+// as their comment -- this recovers that source ticket from it.
+ulong ParseSourceTicketFromComment(string comment)
+  {
+   string prefix = "edgeflow:";
+   if(StringFind(comment, prefix) != 0)
+      return 0;
+   return (ulong)StringToInteger(StringSubstr(comment, StringLen(prefix)));
+  }
+
+int OnInit()
+  {
+   trade.SetExpertMagicNumber(MagicNumber);
+   EventSetMillisecondTimer(PollMillis);
+   ArrayResize(g_sourceTickets, 0);
+   ArrayResize(g_localTickets, 0);
+
+   // Recover the source-ticket -> local-ticket mapping after a restart
+   // (VPS reboot, terminal update, EA reload). Without this, a position
+   // already open here becomes orphaned: no MODIFY or CLOSE from the
+   // source could ever be matched to it again, leaving it open forever
+   // even after the source closes.
+   for(int i = 0; i < PositionsTotal(); i++)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC) != (long)MagicNumber)
+         continue;
+      ulong sourceTicket = ParseSourceTicketFromComment(PositionGetString(POSITION_COMMENT));
+      if(sourceTicket != 0)
+         RememberMapping(sourceTicket, ticket);
+     }
+
+   return(INIT_SUCCEEDED);
+  }
+
+void OnDeinit(const int reason)
+  {
+   EventKillTimer();
   }
 
 string JsonString(string body, string key)
@@ -106,8 +135,9 @@ void HandleCommandFile(string filename)
 
    if(event == "OPEN")
      {
-      bool ok = (side == "BUY") ? trade.Buy(volume, symbol, 0, sl, tp, "edgeflow")
-                                 : trade.Sell(volume, symbol, 0, sl, tp, "edgeflow");
+      string comment = "edgeflow:" + IntegerToString((long)sourceTicket);
+      bool ok = (side == "BUY") ? trade.Buy(volume, symbol, 0, sl, tp, comment)
+                                 : trade.Sell(volume, symbol, 0, sl, tp, comment);
       if(!ok)
          PrintFormat("edgeflow: open failed for %s err=%d", symbol, GetLastError());
       else

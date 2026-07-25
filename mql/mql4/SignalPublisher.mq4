@@ -20,6 +20,24 @@ int OnInit()
   {
    EventSetMillisecondTimer(PollMillis);
    ArrayResize(g_tickets, 0);
+   ArrayResize(g_volumes, 0);
+   ArrayResize(g_stopLoss, 0);
+   ArrayResize(g_takeProfit, 0);
+
+   // Recover state after a restart (VPS reboot, terminal update, EA
+   // reload): adopt currently open positions as already-tracked instead of
+   // treating them as new on the first OnTimer() tick. Without this, every
+   // restart would re-emit an OPEN for each already-open position, which
+   // the target account would duplicate on top of what it already holds.
+   for(int i = 0; i < OrdersTotal(); i++)
+     {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+         continue;
+      if(OrderType() != OP_BUY && OrderType() != OP_SELL)
+         continue;
+      AddTracked(OrderTicket(), OrderLots(), OrderStopLoss(), OrderTakeProfit());
+     }
+
    return(INIT_SUCCEEDED);
   }
 

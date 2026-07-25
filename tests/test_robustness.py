@@ -196,3 +196,35 @@ def test_modify_to_breakeven_sl_is_still_forwarded(tmp_path: Path):
     assert len(modify_files) == 1
     sent = json.loads(modify_files[0].read_text())
     assert sent["stop_loss"] == pytest.approx(1.1000)
+
+
+def _open_position_kwargs(**overrides):
+    kwargs = dict(
+        source_account_id="src", source_ticket=1, target_account_id="tgt",
+        symbol="EURUSD", side="BUY", entry_price=1.10, stop_loss=1.09,
+        take_profit=1.12, target_volume=0.1, risk_pct_intended=1.0,
+        rr_ratio=2.0, risk_deviation_pct=0.0, quality_score=90.0,
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_duplicate_open_position_is_ignored_not_overwritten(tmp_path: Path):
+    """Regression test: a re-processed OPEN signal for a ticket that
+    already has a position record must not reset an already-CLOSED
+    position back to OPEN, nor wipe its opened_at timestamp."""
+    with db.connect(tmp_path / "edgeflow.db") as conn:
+        first = db.open_position(conn, **_open_position_kwargs())
+        assert first is True
+
+        db.close_position(conn, source_account_id="src", source_ticket=1, target_account_id="tgt")
+
+        # A duplicate OPEN arrives (e.g. a reprocessed file) after the
+        # position was already closed.
+        second = db.open_position(conn, **_open_position_kwargs(quality_score=10.0))
+        assert second is False
+
+        positions = db.list_positions(conn)
+        assert len(positions) == 1
+        assert dict(positions[0])["status"] == "CLOSED"
+        assert dict(positions[0])["quality_score"] == 90.0

@@ -172,7 +172,7 @@ def _process_target(signal: TradeSignal, target: TargetAccountConfig,
         has_ob = len(context.order_blocks) > 0
         context_json = json.dumps(asdict(context))
 
-    db.open_position(
+    inserted = db.open_position(
         conn, source_account_id=signal.source_account_id,
         source_ticket=signal.source_ticket, target_account_id=target.id,
         symbol=signal.symbol, side=signal.side.value,
@@ -185,6 +185,11 @@ def _process_target(signal: TradeSignal, target: TargetAccountConfig,
         has_bos=has_bos, has_order_block=has_ob,
         context_json=context_json,
     )
+    if not inserted:
+        logger.warning(
+            "duplicate OPEN for ticket %s on %s ignored (position record already exists)",
+            signal.source_ticket, target.id,
+        )
 
 
 def run_once(cfg: EngineConfig, inbox: SignalInbox, outboxes: dict[str, CommandOutbox],

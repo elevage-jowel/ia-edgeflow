@@ -15,7 +15,7 @@
 </head>
 <body>
   <h1>EdgeFlow — copieur de positions</h1>
-  <p>État : <span id="badge" class="badge">...</span></p>
+  <p>État : <span id="badge" class="badge">...</span> <span id="reason"></span></p>
   <button onclick="post('/api/kill')">Arrêt d'urgence</button>
   <button onclick="post('/api/resume')">Reprendre</button>
   <h2>Positions enregistrées</h2>
@@ -35,6 +35,8 @@ async function refresh() {
   const badge = document.getElementById('badge');
   badge.textContent = data.kill_switch_active ? 'ARRÊTÉ' : 'ACTIF';
   badge.className = 'badge ' + (data.kill_switch_active ? 'killed' : 'ok');
+  const reasonLabels = { MANUAL: '(arrêt manuel)', AUTO_DRAWDOWN: '(protection drawdown journalier)' };
+  document.getElementById('reason').textContent = reasonLabels[data.kill_switch_reason] || '';
   const tbody = document.querySelector('#events tbody');
   tbody.innerHTML = '';
   for (const e of data.recent_events) {
