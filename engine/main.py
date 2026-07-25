@@ -64,6 +64,34 @@ def _process_target(signal: TradeSignal, target: TargetAccountConfig,
         )
         return
 
+    if signal.event.value == "MODIFY":
+        # A SL/TP edit on an already-open position never changes its size,
+        # so this must NOT go through risk-based volume sizing below: a
+        # breakeven stop (SL == entry price) would hit compute_target_volume's
+        # zero-distance guard and silently drop the update. The executor EA
+        # ignores the volume field on MODIFY (see mql/README.md), so this is
+        # a pure SL/TP forward.
+        outbox.send(CopyCommand(
+            target_account_id=target.id,
+            source_ticket=signal.source_ticket,
+            event=signal.event,
+            symbol=signal.symbol,
+            side=signal.side,
+            volume=signal.volume,
+            stop_loss=signal.stop_loss,
+            take_profit=signal.take_profit,
+        ))
+        db.log_copy(
+            conn, source_account_id=signal.source_account_id,
+            source_ticket=signal.source_ticket, target_account_id=target.id,
+            event=signal.event.value, symbol=signal.symbol, side=signal.side.value,
+            source_volume=signal.volume, target_volume=None,
+            entry_price=signal.entry_price, stop_loss=signal.stop_loss,
+            take_profit=signal.take_profit, status="MODIFY_FORWARDED",
+        )
+        return
+
+    # OPEN from here on: needs full risk-parity sizing.
     spec = target.symbol_specs.get(signal.symbol)
     if spec is None:
         db.log_copy(
@@ -127,36 +155,36 @@ def _process_target(signal: TradeSignal, target: TargetAccountConfig,
         take_profit=signal.take_profit, status="COPIED",
     )
 
-    if signal.event.value == "OPEN":
-        score = score_position(
-            signal, target_equity=heartbeat.equity,
-            target_risk_pct=target.risk_pct, target_spec=spec,
-            actual_volume=volume,
-        )
+    # Only OPEN reaches here -- CLOSE and MODIFY both return earlier above.
+    score = score_position(
+        signal, target_equity=heartbeat.equity,
+        target_risk_pct=target.risk_pct, target_spec=spec,
+        actual_volume=volume,
+    )
 
-        context_json = None
-        has_fvg = has_grab = has_bos = has_ob = False
-        if signal.context_candles:
-            context = analyze_entry_context(signal.context_candles)
-            has_fvg = len(context.fair_value_gaps) > 0
-            has_grab = len(context.liquidity_grabs) > 0
-            has_bos = len(context.breaks_of_structure) > 0
-            has_ob = len(context.order_blocks) > 0
-            context_json = json.dumps(asdict(context))
+    context_json = None
+    has_fvg = has_grab = has_bos = has_ob = False
+    if signal.context_candles:
+        context = analyze_entry_context(signal.context_candles)
+        has_fvg = len(context.fair_value_gaps) > 0
+        has_grab = len(context.liquidity_grabs) > 0
+        has_bos = len(context.breaks_of_structure) > 0
+        has_ob = len(context.order_blocks) > 0
+        context_json = json.dumps(asdict(context))
 
-        db.open_position(
-            conn, source_account_id=signal.source_account_id,
-            source_ticket=signal.source_ticket, target_account_id=target.id,
-            symbol=signal.symbol, side=signal.side.value,
-            entry_price=signal.entry_price, stop_loss=signal.stop_loss,
-            take_profit=signal.take_profit, target_volume=volume,
-            risk_pct_intended=target.risk_pct, rr_ratio=score.rr_ratio,
-            risk_deviation_pct=score.risk_deviation_pct,
-            quality_score=score.quality_score,
-            has_fvg=has_fvg, has_liquidity_grab=has_grab,
-            has_bos=has_bos, has_order_block=has_ob,
-            context_json=context_json,
-        )
+    db.open_position(
+        conn, source_account_id=signal.source_account_id,
+        source_ticket=signal.source_ticket, target_account_id=target.id,
+        symbol=signal.symbol, side=signal.side.value,
+        entry_price=signal.entry_price, stop_loss=signal.stop_loss,
+        take_profit=signal.take_profit, target_volume=volume,
+        risk_pct_intended=target.risk_pct, rr_ratio=score.rr_ratio,
+        risk_deviation_pct=score.risk_deviation_pct,
+        quality_score=score.quality_score,
+        has_fvg=has_fvg, has_liquidity_grab=has_grab,
+        has_bos=has_bos, has_order_block=has_ob,
+        context_json=context_json,
+    )
 
 
 def run_once(cfg: EngineConfig, inbox: SignalInbox, outboxes: dict[str, CommandOutbox],

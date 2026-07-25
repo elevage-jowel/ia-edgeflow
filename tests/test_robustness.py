@@ -7,7 +7,7 @@ import yaml
 
 from engine import db
 from engine.config import ConfigError, EngineConfig, SourceAccountConfig, TargetAccountConfig, load_config
-from engine.file_bridge import SignalInbox
+from engine.file_bridge import CommandOutbox, SignalInbox
 from engine.heartbeat import HeartbeatError, read_heartbeat
 from engine.kill_switch import KillSwitch
 from engine.main import run_once
@@ -147,3 +147,52 @@ def test_run_once_survives_unexpected_error_in_one_target(tmp_path: Path):
     # The signal file must still be archived -- one target's crash shouldn't
     # leave it stuck reprocessing forever.
     assert (source_dir / "out" / "processed" / "sig.json").exists()
+
+
+def test_modify_to_breakeven_sl_is_still_forwarded(tmp_path: Path):
+    """Regression test: a MODIFY that moves SL to the entry price (breakeven)
+    must not go through risk-based volume sizing -- that has a zero
+    stop-distance guard which would otherwise silently drop the update."""
+    source_dir = tmp_path / "source"
+    (source_dir / "out").mkdir(parents=True)
+    target_dir = tmp_path / "target"
+    (target_dir / "in").mkdir(parents=True)
+    (target_dir / "heartbeat.json").write_text(
+        json.dumps({"equity": 10000, "balance": 10000, "timestamp": time.time()})
+    )
+
+    spec = SymbolSpec("EURUSD", 100000, 0.00001, 1.0, 0.01, 0.01, 100)
+    cfg = EngineConfig(
+        poll_interval_seconds=0.1, max_daily_drawdown_pct=5.0,
+        kill_switch_file=tmp_path / "KILL", db_path=tmp_path / "edgeflow.db",
+        source=SourceAccountConfig(id="src", files_dir=source_dir),
+        targets=[TargetAccountConfig(id="tgt", files_dir=target_dir, risk_pct=1.0,
+                                      symbol_specs={"EURUSD": spec})],
+    )
+    inbox = SignalInbox(cfg.source.files_dir, cfg.source.id)
+    outboxes = {"tgt": CommandOutbox(target_dir)}
+    kill_switch = KillSwitch(cfg.kill_switch_file, cfg.max_daily_drawdown_pct)
+
+    def drop(name, event, sl):
+        (source_dir / "out" / name).write_text(json.dumps({
+            "ticket": 321, "event": event, "symbol": "EURUSD", "side": "BUY",
+            "volume": 1.0, "entry_price": 1.1000, "stop_loss": sl, "take_profit": 1.1150,
+            "equity": 10000, "timestamp": "t",
+        }))
+
+    with db.connect(cfg.db_path) as conn:
+        drop("1_open.json", "OPEN", 1.0950)
+        run_once(cfg, inbox, outboxes, kill_switch, conn)
+
+        drop("2_mod.json", "MODIFY", 1.1000)  # breakeven: SL == entry price
+        run_once(cfg, inbox, outboxes, kill_switch, conn)
+
+        rows = conn.execute(
+            "SELECT status FROM copy_log WHERE event = 'MODIFY'"
+        ).fetchall()
+
+    assert rows and rows[0][0] == "MODIFY_FORWARDED"
+    modify_files = list((target_dir / "in").glob("321_MODIFY_*.json"))
+    assert len(modify_files) == 1
+    sent = json.loads(modify_files[0].read_text())
+    assert sent["stop_loss"] == pytest.approx(1.1000)
