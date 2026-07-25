@@ -1,4 +1,6 @@
-# EdgeFlow — copieur de positions risk-parity
+# Sentinel (projet EdgeFlow) — copieur de positions risk-parity
+
+**Sentinel** est le nom de l'IA ; **EdgeFlow** reste le nom du dépôt/projet technique qui l'héberge.
 
 Réplique automatiquement les positions d'un compte MetaTrader (source) vers un ou plusieurs autres comptes (cibles), en risquant le **même pourcentage de capital** sur chaque compte — pas le même nombre de lots, pas un ratio d'equity naïf.
 

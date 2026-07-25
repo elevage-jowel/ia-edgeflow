@@ -253,7 +253,7 @@ def main(config_path: str) -> None:
 
     with db.connect(cfg.db_path) as conn:
         logger.info(
-            "edgeflow engine started: source=%s targets=%s",
+            "Sentinel engine started: source=%s targets=%s",
             cfg.source.id, [t.id for t in cfg.targets],
         )
         while not stop["requested"]:
